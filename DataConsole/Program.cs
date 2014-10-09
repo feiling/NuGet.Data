@@ -61,14 +61,14 @@ namespace DataConsole
                                 }
                                 }}");
 
-                DataClient cache = new DataClient(context);
+                DataClient cache = new DataClient(new CacheHttpClient(), new MemoryFileCache(), context);
 
                 //Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/microsoft.bcl/index.json");
                 Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/newtonsoft.json/index.json");
 
                 JObject jObj = await cache.GetFile(packageInfoUri);
 
-                //JToken jObj2 = await cache.GetFile(packageInfoUri);
+                JToken jObj2 = await cache.GetFile(packageInfoUri);
 
                 EntityCache ec = new EntityCache();
                 await ec.Add(jObj, packageInfoUri);
