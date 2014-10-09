@@ -213,14 +213,20 @@ namespace NuGet.Data
 
                 if (entity != null)
                 {
-                    bool fetch = await _entityCache.FetchNeeded(entity, properties);
+                    // determine if we should fetch the page or give up
+                    bool? fetch = await _entityCache.FetchNeeded(entity, properties);
 
-                    if (fetch)
+                    // we are missing properties and do not have the page
+                    if (fetch == true)
                     {
                         await GetFile(entity);
                     }
 
-                    return await _entityCache.GetEntity(entity);
+                    // null means either there is no work to do, or that we gave up, return the original token here
+                    if (fetch != null)
+                    {
+                        return await _entityCache.GetEntity(entity);
+                    }
                 }
                 else
                 {

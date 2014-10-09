@@ -48,9 +48,17 @@ namespace NuGet.Data
             }
         }
 
-        public async Task<bool> FetchNeeded(Uri entity, IEnumerable<Uri> properties)
+        /// <summary>
+        /// True - we are missing properties and do not have the page
+        /// False - we have the official page, and should turn that JToken
+        /// Null - no properties are missing, and we don't have the page, but we can return the same one
+        /// </summary>
+        /// <param name="entity"></param>
+        /// <param name="properties"></param>
+        /// <returns></returns>
+        public async Task<bool?> FetchNeeded(Uri entity, IEnumerable<Uri> properties)
         {
-            bool result = true;
+            bool? result = true;
 
             if (HasPageOfEntity(entity))
             {
@@ -77,7 +85,10 @@ namespace NuGet.Data
                     }
                 }
 
-                result = missing;
+                if (!missing)
+                {
+                    result = null;
+                }
             }
 
             return result;
