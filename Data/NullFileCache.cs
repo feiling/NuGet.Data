@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -15,19 +16,19 @@ namespace NuGet.Data
 
         }
 
-        public override void Add(FileCacheEntry entry)
+        public override void Remove(Uri uri)
         {
             // do nothing
         }
 
-        public override bool TryGet(Uri uri, out FileCacheEntry entry)
+        public override bool TryGet(Uri uri, out Stream stream)
         {
             // do nothing
-            entry = null;
+            stream = null;
             return false;
         }
 
-        public override void Remove(Uri uri)
+        public override void Add(Uri uri, TimeSpan lifeSpan, System.IO.Stream stream)
         {
             // do nothing
         }

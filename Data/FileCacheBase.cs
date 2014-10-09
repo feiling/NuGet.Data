@@ -10,10 +10,10 @@ namespace NuGet.Data
 {
     public abstract class FileCacheBase
     {
-        public abstract bool TryGet(Uri uri, out FileCacheEntry entry);
+        public abstract bool TryGet(Uri uri, out Stream stream);
 
         public abstract void Remove(Uri uri);
 
-        public abstract void Add(FileCacheEntry entry);
+        public abstract void Add(Uri uri, TimeSpan lifeSpan, Stream stream);
     }
 }

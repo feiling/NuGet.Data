@@ -1,5 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Diagnostics;
+using System.IO;
 using System.Linq;
 using System.Text;
 using System.Threading.Tasks;
@@ -8,10 +10,12 @@ namespace NuGet.Data
 {
     public class BrowserFileCache : FileCacheBase
     {
-
-        public override void Add(FileCacheEntry entry)
+        /// <summary>
+        /// Browser cache based on mshtml
+        /// </summary>
+        public BrowserFileCache()
         {
-            throw new NotImplementedException();
+
         }
 
         public override void Remove(Uri uri)
@@ -19,10 +23,18 @@ namespace NuGet.Data
             throw new NotImplementedException();
         }
 
-        public override bool TryGet(Uri uri, out FileCacheEntry entry)
+        public override bool TryGet(Uri uri, out Stream stream)
         {
-            throw new NotImplementedException();
+            stream = BrowserCache.Get(uri.AbsoluteUri);
+
+            return stream != null;
         }
 
+        public override void Add(Uri uri, TimeSpan lifeSpan, Stream stream)
+        {
+            bool result = BrowserCache.Add(uri.AbsoluteUri, stream, DateTime.Now.AddHours(1));
+
+            Debug.Assert(result, "failed to add to cache");
+        }
     }
 }

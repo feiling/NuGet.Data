@@ -63,16 +63,28 @@ namespace DataConsole
 
                 DataClient cache = new DataClient(context);
 
-                Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/entityframework/index.json");
+                //Uri packageInfoUri = new Uri("https://nugetjohtaylo.blob.core.windows.net/ver31/registration/ajaxcontroltoolkit/index.json");
+                Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/newtonsoft.json/index.json");
+
+                CacheHttpClient client = new CacheHttpClient();
+                var jObj3 = await client.GetJObjectAsync(packageInfoUri);
 
                 JToken jObj = await cache.GetFile(packageInfoUri);
 
-                var myObj = await cache.GetInclusiveView(new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/entityframework/index.json"));
+                JToken jObj2 = await cache.GetFile(packageInfoUri);
 
-                using (StreamWriter writer = new StreamWriter(@"d:\out.json"))
-                {
-                    writer.Write(myObj.ToString());
-                }
+                var entity = await cache.GetEntity(new Uri("http://nugetjohtaylo.blob.core.windows.net/ver31/registration/ajaxcontroltoolkit/index.json#page/1.0.0/7.1213.0"));
+
+                var blah = await cache.Ensure(entity, new Uri[] { new Uri("http://schema.nuget.org/schema#commitId") });
+
+                var id = blah["commitId"];
+
+                ////var myObj = await cache.GetInclusiveView(new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/entityframework/index.json"));
+
+                //using (StreamWriter writer = new StreamWriter(@"d:\out.json"))
+                //{
+                //    writer.Write(myObj.ToString());
+                //}
             }
             catch (Exception ex)
             {

@@ -34,21 +34,5 @@ namespace NuGet.Data
                 }
             });
         }
-
-        //public Task<IGraph> GetGraphAsync(Uri address)
-        //{
-        //    Task<JObject> task = GetJObjectAsync(address);
-        //    return task.ContinueWith<IGraph>((t) =>
-        //    {
-        //        try
-        //        {
-        //            return Utils.CreateGraph(t.Result);
-        //        }
-        //        catch (Exception e)
-        //        {
-        //            throw new Exception(string.Format("GetGraphAsync({0})", address), e);
-        //        }
-        //    });
-        //}
     }
 }

@@ -187,46 +187,4 @@ namespace NuGet.Data
             return Subject.Equals(other.Subject) && Predicate.Equals(other.Predicate) && Object.Equals(other.Object);
         }
     }
-
-    //public class Node : IEquatable<Node>
-    //{
-    //    private readonly string _value;
-
-    //    public Node(string value)
-    //    {
-    //        _value = value;
-    //    }
-
-    //    public virtual string Value
-    //    {
-    //        get
-    //        {
-    //            return _value;
-    //        }
-    //    }
-
-    //    public bool Equals(Node other)
-    //    {
-    //        return Value == other.Value;
-    //    }
-    //}
-
-    //public class UriNode : Node
-    //{
-    //    private readonly Uri _uri;
-
-    //    public UriNode(Uri uri)
-    //        : base(uri.AbsoluteUri)
-    //    {
-    //        _uri = uri;
-    //    }
-
-    //    public virtual Uri Uri
-    //    {
-    //        get
-    //        {
-    //            return _uri;
-    //        }
-    //    }
-    //}
 }
