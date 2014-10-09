@@ -13,12 +13,12 @@ namespace NuGet.Data
     public class EntityCache
     {
         private const string CacheNode = "http://nuget.org/cache/node";
-        private readonly JsonLdGraph _masterGraph;
+        private readonly JsonLdGraphOld _masterGraph;
         private readonly Queue<JsonLdPage> _pages;
 
         public EntityCache()
         {
-            _masterGraph = new JsonLdGraph();
+            _masterGraph = new JsonLdGraphOld();
             _pages = new Queue<JsonLdPage>();
         }
 
@@ -167,7 +167,7 @@ namespace NuGet.Data
             }
 
             // create the real graph
-            JsonLdGraph jsonGraph = new JsonLdGraph();
+            JsonLdGraphOld jsonGraph = new JsonLdGraphOld();
 
             var cacheGraph = new BasicGraph(cacheTriples);
 
