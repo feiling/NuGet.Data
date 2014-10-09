@@ -63,17 +63,17 @@ namespace DataConsole
 
                 DataClient cache = new DataClient(context);
 
-                //Uri packageInfoUri = new Uri("https://nugetjohtaylo.blob.core.windows.net/ver31/registration/ajaxcontroltoolkit/index.json");
-                Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/newtonsoft.json/index.json");
+                Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/microsoft.bcl/index.json");
+                //Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/newtonsoft.json/index.json");
 
-                CacheHttpClient client = new CacheHttpClient();
-                var jObj3 = await client.GetJObjectAsync(packageInfoUri);
+                JObject jObj = await cache.GetFile(packageInfoUri);
 
-                JToken jObj = await cache.GetFile(packageInfoUri);
+                //JToken jObj2 = await cache.GetFile(packageInfoUri);
 
-                JToken jObj2 = await cache.GetFile(packageInfoUri);
+                EntityCache ec = new EntityCache();
+                await ec.Add(jObj, packageInfoUri);
 
-                var entity = await cache.GetEntity(new Uri("http://nugetjohtaylo.blob.core.windows.net/ver31/registration/ajaxcontroltoolkit/index.json#page/1.0.0/7.1213.0"));
+                var entity = await cache.GetEntity(new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/newtonsoft.json/index.json"));
 
                 var blah = await cache.Ensure(entity, new Uri[] { new Uri("http://schema.nuget.org/schema#commitId") });
 

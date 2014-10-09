@@ -61,6 +61,7 @@
     <Reference Include="System.Xml" />
   </ItemGroup>
   <ItemGroup>
+    <Compile Include="BaseGraph.cs" />
     <Compile Include="BasicGraph.cs" />
     <Compile Include="BrowserCache\Native.cs" />
     <Compile Include="BrowserCache\BrowserCache.cs" />
@@ -70,6 +71,7 @@
     <Compile Include="FileCacheBase.cs" />
     <Compile Include="FileCacheEntry.cs" />
     <Compile Include="JsonExtensions.cs" />
+    <Compile Include="JsonLdGraph.cs" />
     <Compile Include="MemoryFileCache.cs" />
     <Compile Include="MemoryFileCacheEntry.cs" />
     <Compile Include="DataClient.cs" />

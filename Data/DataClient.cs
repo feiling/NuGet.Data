@@ -19,6 +19,7 @@ namespace NuGet.Data
         private readonly HttpClient _httpClient;
         private readonly FileCacheBase _fileCache;
         private readonly JToken _context;
+        private readonly EntityCache _entityCache;
 
         /// <summary>
         /// DataClient with the default options.
@@ -50,7 +51,7 @@ namespace NuGet.Data
             _httpClient = httpClient;
             _fileCache = fileCache;
             _context = context;
-
+            _entityCache = new EntityCache();
         }
 
         /// <summary>
@@ -105,6 +106,8 @@ namespace NuGet.Data
                                     if (stream != null)
                                     {
                                         _fileCache.Add(fixedUri, lifeSpan, stream);
+                                        stream.Seek(0, SeekOrigin.Begin);
+
                                         result = await StreamToJson(stream);
                                     }
                                 }
@@ -139,6 +142,18 @@ namespace NuGet.Data
                 }
             }
 
+            if (result != null)
+            {
+                // reduce and add
+                _entityCache.Reduce(50000);
+                await _entityCache.Add(result, fixedUri);
+            }
+
+            if (result != null)
+            {
+                result = result.DeepClone() as JObject;
+            }
+
             return result;
         }
 
@@ -150,16 +165,31 @@ namespace NuGet.Data
         /// <returns>The entity Json</returns>
         public async Task<JToken> GetEntity(Uri entity)
         {
-            JObject json = await GetFile(entity);
+            JToken token = await _entityCache.GetEntity(entity);
 
-            return await FindEntityInJson(entity, json);
+            if (token == null)
+            {
+                await GetFile(entity);
+                var result = await _entityCache.GetEntity(entity);
+
+                if (result != null)
+                {
+                    token = result.DeepClone();
+                }
+                else
+                {
+                    Debug.Fail("Unable to get entity");
+                }
+            }
+
+            return token;
         }
 
         private async Task<JToken> FindEntityInJson(Uri entity, JObject json)
         {
             string search = entity.AbsoluteUri;
 
-            var idNode = json.Descendants().Where(n =>
+            var idNode = json.Descendants().Concat(json).Where(n =>
                 {
                     JProperty prop = n as JProperty;
 
@@ -175,7 +205,7 @@ namespace NuGet.Data
 
             if (idNode != null)
             {
-                return idNode.Parent;
+                return idNode.Parent.DeepClone();
             }
 
             return null;
@@ -188,9 +218,90 @@ namespace NuGet.Data
         /// <param name="jToken">The JToken to expand. This should have an @id.</param>
         /// <param name="properties">Expanded form properties that are needed on JToken.</param>
         /// <returns>The same JToken if it already exists, otherwise the fetched JToken.</returns>
-        public async Task<JToken> Ensure(JToken jToken, IEnumerable<Uri> properties)
+        public async Task<JToken> Ensure(JToken token, IEnumerable<Uri> properties)
         {
-            return jToken;
+            if (IsEntityFromPage(token) == false)
+            {
+                Uri entity = GetEntityUri(token);
+
+                bool fetch = await _entityCache.FetchNeeded(entity, properties);
+
+                if (fetch)
+                {
+                    await GetFile(entity);
+                }
+
+                return await _entityCache.GetEntity(entity);
+            }
+
+            return token;
+        }
+
+        private static bool? IsEntityFromPage(JToken token)
+        {
+            bool? result = null;
+            Uri uri = GetEntityUri(token);
+
+            if (uri != null)
+            {
+                var rootUri = GetEntityUri(GetRoot(token));
+
+                result = CompareRootUris(uri, rootUri);
+            }
+
+            return result;
+        }
+
+        private static bool CompareRootUris(Uri a, Uri b)
+        {
+            var x = GetUriWithoutHash(a);
+            var y = GetUriWithoutHash(b);
+
+            return x.Equals(y);
+        }
+
+        private static Uri GetUriWithoutHash(Uri uri)
+        {
+            string s = uri.AbsoluteUri;
+            int hash = s.IndexOf('#');
+
+            if (hash > -1)
+            {
+                s = s.Substring(0, hash);
+                return new Uri(s);
+            }
+            else
+            {
+                return uri;
+            }
+        }
+
+        private static JToken GetRoot(JToken token)
+        {
+            JToken parent = token;
+
+            while (parent.Parent != null)
+            {
+                parent = parent.Parent;
+            }
+
+            return parent;
+        }
+
+        private static Uri GetEntityUri(JToken token)
+        {
+            JObject jObj = token as JObject;
+
+            if (jObj != null)
+            {
+                JToken urlValue;
+                if (jObj.TryGetValue("url", out urlValue))
+                {
+                    return new Uri(urlValue.ToString());
+                }
+            }
+
+            return null;
         }
 
         private async static Task<JObject> StreamToJson(Stream stream)
@@ -199,10 +310,17 @@ namespace NuGet.Data
 
             if (stream != null)
             {
-                using (var reader = new StreamReader(stream))
+                try
                 {
-                    string json = reader.ReadToEnd();
-                    jObj = JObject.Parse(json);
+                    using (var reader = new StreamReader(stream))
+                    {
+                        string json = reader.ReadToEnd();
+                        jObj = JObject.Parse(json);
+                    }
+                } 
+                catch (Exception ex)
+                {
+                    Debug.Fail("Unable to parse json: " + ex.ToString());
                 }
             }
 

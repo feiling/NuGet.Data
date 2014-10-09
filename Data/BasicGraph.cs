@@ -9,7 +9,7 @@ using System.Globalization;
 
 namespace NuGet.Data
 {
-    public class BasicGraph
+    public class BasicGraph : BaseGraph
     {
         private readonly HashSet<Triple> _triples;
 
@@ -24,61 +24,7 @@ namespace NuGet.Data
             _triples = new HashSet<Triple>(triples);
         }
 
-        public void Assert(Triple triple)
-        {
-            Triples.Add(triple);
-        }
-
-        public void Assert(RDFDataset.Quad quad)
-        {
-            Triples.Add(new Triple(quad.GetSubject(), quad.GetPredicate(), quad.GetObject()));
-        }
-
-        public void Assert(RDFDataset.Node subNode, RDFDataset.Node predNode, RDFDataset.Node objNode)
-        {
-            Triples.Add(new Triple(subNode, predNode, objNode));
-        }
-
-        public void Merge(BasicGraph graph)
-        {
-            foreach (var triple in graph.Triples)
-            {
-                Triples.Add(triple);
-            }
-        }
-
-        public BasicGraph RecursiveDescribe(Uri entity)
-        {
-            HashSet<Triple> triples = new HashSet<Triple>();
-            RecursiveDescribeInternal(entity.AbsoluteUri, this, triples);
-
-            return new BasicGraph(triples);
-        }
-
-        private static void RecursiveDescribeInternal(string subject, BasicGraph graph, HashSet<Triple> triples)
-        {
-            bool needsRecurse = false;
-
-            var children = graph.SelectSubject(subject).Triples;
-
-            foreach (var triple in children)
-            {
-                if (triples.Add(triple))
-                {
-                    needsRecurse = true;
-                }
-            }
-
-            if (needsRecurse)
-            {
-                foreach (var triple in children)
-                {
-                    RecursiveDescribeInternal(triple.Object.GetValue(), graph, triples);
-                }
-            }
-        }
-
-        public HashSet<Triple> Triples
+        public override HashSet<Triple> Triples
         {
             get
             {
@@ -86,63 +32,7 @@ namespace NuGet.Data
             }
         }
 
-        public string NQuads
-        {
-            get
-            {
-                StringBuilder builder = new StringBuilder();
-
-                foreach(var triple in Triples)
-                {
-                    builder.Append(FormatQuadNode(triple.Subject) + " ");
-                    builder.Append(FormatQuadNode(triple.Predicate) + " ");
-                    builder.Append(FormatQuadNode(triple.Object) + " ." + Environment.NewLine);
-                }
-
-                return builder.ToString();
-            }
-        }
-
-        private static string FormatQuadNode(Node node)
-        {
-            if (node.IsIRI())
-            {
-                return String.Format(CultureInfo.InvariantCulture, "<{0}>", node.GetValue());
-            }
-            else if (node.IsLiteral())
-            {
-                return String.Format(CultureInfo.InvariantCulture, "\"{0}\"", node.GetValue());
-            }
-
-            return node.GetValue();
-        }
-
-
-        // Query
-        public BasicGraph SelectSubject(Uri subject)
-        {
-            return SelectSubject(subject.AbsoluteUri);
-        }
-
-        public BasicGraph SelectSubject(string subject)
-        {
-            var triples = Triples.Where(t => t.Subject.GetValue() == subject);
-
-            return new BasicGraph(triples.ToList());
-        }
-
-        public BasicGraph SelectPredicate(Uri predicate)
-        {
-            return SelectPredicate(predicate.AbsoluteUri);
-        }
-
-        public BasicGraph SelectPredicate(string predicate)
-        {
-            var triples = Triples.Where(t => t.Subject.GetValue() == predicate);
-
-            return new BasicGraph(triples.ToList());
-        }
-
+        
     }
 
     public class Triple : IEquatable<Triple>
