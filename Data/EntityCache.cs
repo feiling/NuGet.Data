@@ -95,6 +95,7 @@ namespace NuGet.Data
                     return;
                 }
 
+                DataTraceSources.Verbose("[EntityCache] Added {0}", pageUri.AbsoluteUri);
                 _pages.Enqueue(page);
             }
 
@@ -172,17 +173,21 @@ namespace NuGet.Data
             }
         }
 
-        public void Reduce(int maxTriples)
+        public bool Reduce(int maxTriples)
         {
+            bool reduced = false;
+
             lock (this)
             {
                 while (_masterGraph.Count > maxTriples)
                 {
                     var removePage = _pages.Dequeue();
-
                     _masterGraph.Triples.RemoveWhere(t => t.Page.Equals(removePage));
+                    reduced = true;
                 }
             }
+
+            return reduced;
         }
 
         private const string CompactedIdName = "url";

@@ -20,6 +20,8 @@ namespace NuGet.Data
         private readonly FileCacheBase _fileCache;
         private readonly JToken _context;
         private readonly EntityCache _entityCache;
+        private static readonly TimeSpan _lifeSpan = TimeSpan.FromMinutes(5);
+        private const int _maxEntityCacheSize = 50000;
 
         /// <summary>
         /// DataClient with the default options.
@@ -59,7 +61,7 @@ namespace NuGet.Data
         /// </summary>
         /// <param name="uri"></param>
         /// <returns></returns>
-        public async Task<JObject> GetFile(Uri uri)
+        public async Task<JObject> GetFile(Uri uri, bool cache=true)
         {
             Uri fixedUri = uri;
 
@@ -68,17 +70,16 @@ namespace NuGet.Data
                 fixedUri = new Uri(uri.AbsoluteUri.Split('#')[0]);
             }
 
-            JObject result = null;
             Stream stream = null;
+            JObject result = null;
 
             try
             {
                 using (var uriLock = new UriLock(fixedUri))
                 {
-                    if (!_fileCache.TryGet(fixedUri, out stream))
+                    if (!cache || !_fileCache.TryGet(fixedUri, out stream))
                     {
-                        // the stream was not in the cache
-
+                        // the stream was not in the cache or we are skipping the cache
                         int tries = 0;
 
                         // try up to 5 times to be a little more robust
@@ -90,12 +91,12 @@ namespace NuGet.Data
                             {
                                 HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, fixedUri.AbsoluteUri);
 
+                                DataTraceSources.Verbose("[HttpClient] GET {0}", fixedUri.AbsoluteUri);
+
                                 var response = await _httpClient.SendAsync(request);
 
                                 if (response.StatusCode == HttpStatusCode.OK)
                                 {
-                                    TimeSpan lifeSpan = TimeSpan.FromMinutes(30);
-
                                     if (!response.Headers.CacheControl.NoStore)
                                     {
                                         // TODO: Determine the real lifespan from the headers
@@ -105,14 +106,19 @@ namespace NuGet.Data
 
                                     if (stream != null)
                                     {
-                                        _fileCache.Add(fixedUri, lifeSpan, stream);
-                                        stream.Seek(0, SeekOrigin.Begin);
+                                        if (cache)
+                                        {
+                                            DataTraceSources.Verbose("[HttpClient] Caching {0}");
+                                            _fileCache.Add(fixedUri, _lifeSpan, stream);
+                                        }
 
+                                        DataTraceSources.Verbose("[HttpClient] 200 OK Length: {0}", "" + stream.Length);
                                         result = await StreamToJson(stream);
                                     }
                                 }
                                 else
                                 {
+                                    DataTraceSources.Verbose("[HttpClient] FAILED {0}", "" + (int)response.StatusCode);
                                     result = new JObject();
                                     result.Add("HttpStatusCode", (int)response.StatusCode);
                                 }
@@ -120,6 +126,7 @@ namespace NuGet.Data
                             catch (HttpRequestException ex)
                             {
                                 Debug.Fail("WebRequest failed: " + ex.ToString());
+                                DataTraceSources.Verbose("[HttpClient] FAILED {0}", ex.ToString());
 
                                 // request error
                                 result = new JObject();
@@ -130,6 +137,7 @@ namespace NuGet.Data
                     else
                     {
                         // the stream was in the cache
+                        DataTraceSources.Verbose("[HttpClient] Cached Length: {0}", "" + stream.Length);
                         result = await StreamToJson(stream);
                     }
                 }
@@ -142,10 +150,14 @@ namespace NuGet.Data
                 }
             }
 
-            if (result != null)
+            if (result != null && cache)
             {
                 // reduce and add
-                _entityCache.Reduce(50000);
+                if (_entityCache.Reduce(_maxEntityCacheSize))
+                {
+                    DataTraceSources.Verbose("[EntityCache] Reduced");
+                }
+
                 await _entityCache.Add(result, fixedUri);
             }
 
@@ -178,37 +190,12 @@ namespace NuGet.Data
                 }
                 else
                 {
+                    DataTraceSources.Verbose("[EntityCache] Unable to get entity {0}", entity.AbsoluteUri);
                     Debug.Fail("Unable to get entity");
                 }
             }
 
             return token;
-        }
-
-        private async Task<JToken> FindEntityInJson(Uri entity, JObject json)
-        {
-            string search = entity.AbsoluteUri;
-
-            var idNode = json.Descendants().Concat(json).Where(n =>
-                {
-                    JProperty prop = n as JProperty;
-
-                    if (prop != null)
-                    {
-                        string url = prop.Value.ToString();
-
-                        return StringComparer.Ordinal.Equals(url, search);
-                    }
-
-                    return false;
-                }).FirstOrDefault();
-
-            if (idNode != null)
-            {
-                return idNode.Parent.DeepClone();
-            }
-
-            return null;
         }
 
         /// <summary>
@@ -220,88 +207,32 @@ namespace NuGet.Data
         /// <returns>The same JToken if it already exists, otherwise the fetched JToken.</returns>
         public async Task<JToken> Ensure(JToken token, IEnumerable<Uri> properties)
         {
-            if (IsEntityFromPage(token) == false)
+            if (Utility.IsEntityFromPage(token) == false)
             {
-                Uri entity = GetEntityUri(token);
+                Uri entity = Utility.GetEntityUri(token);
 
-                bool fetch = await _entityCache.FetchNeeded(entity, properties);
-
-                if (fetch)
+                if (entity != null)
                 {
-                    await GetFile(entity);
+                    bool fetch = await _entityCache.FetchNeeded(entity, properties);
+
+                    if (fetch)
+                    {
+                        await GetFile(entity);
+                    }
+
+                    return await _entityCache.GetEntity(entity);
                 }
-
-                return await _entityCache.GetEntity(entity);
-            }
-
-            return token;
-        }
-
-        private static bool? IsEntityFromPage(JToken token)
-        {
-            bool? result = null;
-            Uri uri = GetEntityUri(token);
-
-            if (uri != null)
-            {
-                var rootUri = GetEntityUri(GetRoot(token));
-
-                result = CompareRootUris(uri, rootUri);
-            }
-
-            return result;
-        }
-
-        private static bool CompareRootUris(Uri a, Uri b)
-        {
-            var x = GetUriWithoutHash(a);
-            var y = GetUriWithoutHash(b);
-
-            return x.Equals(y);
-        }
-
-        private static Uri GetUriWithoutHash(Uri uri)
-        {
-            string s = uri.AbsoluteUri;
-            int hash = s.IndexOf('#');
-
-            if (hash > -1)
-            {
-                s = s.Substring(0, hash);
-                return new Uri(s);
+                else
+                {
+                    DataTraceSources.Verbose("[EntityCache] Unable to find entity @id!");
+                }
             }
             else
             {
-                return uri;
-            }
-        }
-
-        private static JToken GetRoot(JToken token)
-        {
-            JToken parent = token;
-
-            while (parent.Parent != null)
-            {
-                parent = parent.Parent;
+                DataTraceSources.Verbose("[EntityCache] Entity is from this page.");
             }
 
-            return parent;
-        }
-
-        private static Uri GetEntityUri(JToken token)
-        {
-            JObject jObj = token as JObject;
-
-            if (jObj != null)
-            {
-                JToken urlValue;
-                if (jObj.TryGetValue("url", out urlValue))
-                {
-                    return new Uri(urlValue.ToString());
-                }
-            }
-
-            return null;
+            return token;
         }
 
         private async static Task<JObject> StreamToJson(Stream stream)
@@ -312,16 +243,23 @@ namespace NuGet.Data
             {
                 try
                 {
+                    stream.Seek(0, SeekOrigin.Begin);
+
                     using (var reader = new StreamReader(stream))
                     {
-                        string json = reader.ReadToEnd();
+                        string json = await reader.ReadToEndAsync();
                         jObj = JObject.Parse(json);
                     }
                 } 
                 catch (Exception ex)
                 {
+                    DataTraceSources.Verbose("[StreamToJson] Failed {0}", ex.ToString());
                     Debug.Fail("Unable to parse json: " + ex.ToString());
                 }
+            }
+            else
+            {
+                DataTraceSources.Verbose("[StreamToJson] Null stream!");
             }
 
             return jObj;
