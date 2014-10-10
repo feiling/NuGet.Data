@@ -24,27 +24,11 @@ namespace NuGet.Data
 
         public bool HasPageOfEntity(Uri entity)
         {
-            JsonLdPage page = new JsonLdPage(GetUriWithoutHash(entity));
+            JsonLdPage page = new JsonLdPage(Utility.GetUriWithoutHash(entity));
 
             lock (this)
             {
                 return _pages.Contains(page);
-            }
-        }
-
-        private Uri GetUriWithoutHash(Uri uri)
-        {
-            string s = uri.AbsoluteUri;
-            int hash = s.IndexOf('#');
-
-            if (hash > -1)
-            {
-                s = s.Substring(0, hash);
-                return new Uri(s);
-            }
-            else
-            {
-                return uri;
             }
         }
 
