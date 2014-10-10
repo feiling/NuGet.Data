@@ -76,7 +76,7 @@ namespace DataConsole
                 var jObj2 = await task;
 
                 EntityCache ec = new EntityCache();
-                await ec.Add(jObj, packageInfoUri);
+                ec.Add(jObj, packageInfoUri);
 
                 var entity = await cache.GetEntity(new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/newtonsoft.json/index.json"));
 

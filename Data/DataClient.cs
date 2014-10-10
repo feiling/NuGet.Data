@@ -21,7 +21,6 @@ namespace NuGet.Data
         private readonly JToken _context;
         private readonly EntityCache _entityCache;
         private static readonly TimeSpan _lifeSpan = TimeSpan.FromMinutes(5);
-        private const int _maxEntityCacheSize = 50000;
 
         /// <summary>
         /// DataClient with the default options.
@@ -152,13 +151,8 @@ namespace NuGet.Data
 
             if (result != null && cache)
             {
-                // reduce and add
-                if (_entityCache.Reduce(_maxEntityCacheSize))
-                {
-                    DataTraceSources.Verbose("[EntityCache] Reduced");
-                }
-
-                await _entityCache.Add(result, fixedUri);
+                // this call is only blocking if the cache is overloaded
+                _entityCache.Add(result, fixedUri);
             }
 
             if (result != null)

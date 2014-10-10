@@ -14,10 +14,10 @@ namespace NuGet.Data
     /// </summary>
     public class JsonLdTriple : Triple
     {
-        private readonly JToken _jsonNode;
+        private readonly JObject _jsonNode;
         private readonly JsonLdPage _jsonPage;
 
-        public JsonLdTriple(JsonLdPage page, JToken jsonNode, Node subNode, Node predNode, Node objNode)
+        public JsonLdTriple(JsonLdPage page, JObject jsonNode, Node subNode, Node predNode, Node objNode)
             : base(subNode, predNode, objNode)
         {
             _jsonNode = jsonNode;

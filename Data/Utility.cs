@@ -1,4 +1,5 @@
-﻿using Newtonsoft.Json.Linq;
+﻿using JsonLD.Core;
+using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Generic;
 using System.Linq;
@@ -19,7 +20,7 @@ namespace NuGet.Data
             return compacted != null && GetContext(compacted) != null;
         }
 
-        public static readonly string[] IdNames = new string[] { "url", "@id" };
+        public static readonly string[] IdNames = new string[] { Constants.UrlIdName, Constants.IdName };
 
         public static Uri GetUriWithoutHash(Uri uri)
         {
@@ -97,7 +98,7 @@ namespace NuGet.Data
             {
                 JToken context;
 
-                if (jObj.TryGetValue("@context", out context))
+                if (jObj.TryGetValue(Constants.ContextName, out context))
                 {
                     return context;
                 }
@@ -153,6 +154,62 @@ namespace NuGet.Data
             }
 
             return null;
+        }
+
+        public static bool IsInContext(JToken token)
+        {
+            JToken parent = token;
+
+            while (parent != null)
+            {
+                JProperty prop = parent as JProperty;
+
+                if (prop != null && StringComparer.Ordinal.Equals(prop.Name, Constants.ContextName))
+                {
+                    return true;
+                }
+
+                parent = parent.Parent;
+            }
+
+            return false;
+        }
+
+        public static void JsonEntityVisitor(JObject root, Action<JObject> visitor)
+        {
+            var props = root
+                .Descendants()
+                .Where(t => t.Type == JTokenType.Property)
+                .Cast<JProperty>()
+                .Where(p => Utility.IdNames.Contains(p.Name))
+                .ToList();
+
+            foreach (var prop in props)
+            {
+                visitor((JObject)prop.Parent);
+            }
+        }
+        public static BasicGraph GetGraphFromCompacted(JToken compacted)
+        {
+            var flattened = JsonLdProcessor.Flatten(compacted, new JsonLdOptions());
+            return GetGraph(flattened);
+        }
+
+        public static BasicGraph GetGraph(JToken flattened)
+        {
+            BasicGraph graph = new BasicGraph();
+
+            RDFDataset dataSet = (RDFDataset)JsonLD.Core.JsonLdProcessor.ToRDF(flattened);
+
+            foreach (var graphName in dataSet.GraphNames())
+            {
+                foreach (var quad in dataSet.GetQuads(graphName))
+                {
+                    graph.Assert(quad);
+                }
+            }
+
+            return graph;
         }
     }
 }

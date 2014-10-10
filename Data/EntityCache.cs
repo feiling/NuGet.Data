@@ -2,6 +2,7 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,16 +11,22 @@ using System.Threading.Tasks;
 
 namespace NuGet.Data
 {
+    /// <summary>
+    /// Thread safe cache of graphs.
+    /// </summary>
     public class EntityCache
     {
-        private const string CacheNode = "http://nuget.org/cache/node";
-        private readonly JsonLdGraphOld _masterGraph;
+        private readonly JsonLdGraph _masterGraph;
         private readonly Queue<JsonLdPage> _pages;
+        private readonly ConcurrentQueue<Task> _addTasks;
+        private const int _maxAdds = 5;
+        private const int _maxEntityCacheSize = 50000;
 
         public EntityCache()
         {
-            _masterGraph = new JsonLdGraphOld();
+            _masterGraph = new JsonLdGraph();
             _pages = new Queue<JsonLdPage>();
+            _addTasks = new ConcurrentQueue<Task>();
         }
 
         public bool HasPageOfEntity(Uri entity)
@@ -78,7 +85,28 @@ namespace NuGet.Data
             return result;
         }
 
-        public async Task Add(JObject compacted, Uri pageUri)
+        public void Add(JObject compacted, Uri pageUri)
+        {
+            // this is probably thread safe enough, but just to avoid too many dequeues and waits at the same time
+            lock (this)
+            {
+                Reduce(_maxEntityCacheSize);
+
+                if (_addTasks.Count >= _maxAdds)
+                {
+                    // force a wait if we are over the limit
+                    Task curTask = null;
+                    if (_addTasks.TryDequeue(out curTask))
+                    {
+                        curTask.Wait();
+                    }
+                }
+
+                _addTasks.Enqueue(Task.Run(() => AddInternal(compacted, pageUri)));
+            }
+        }
+
+        private void AddInternal(JObject compacted, Uri pageUri)
         {
             JsonLdPage page = new JsonLdPage(pageUri);
 
@@ -112,74 +140,7 @@ namespace NuGet.Data
                 _pages.Enqueue(page);
             }
 
-            HashSet<JToken> entityNodes = new HashSet<JToken>();
-
-            Dictionary<int, JToken> nodes = new Dictionary<int,JToken>();
-            int marker = 0;
-
-            // Visitor
-            Action<JObject> addSerial = (node) =>
-            {
-                if (!IsInContext(node))
-                {
-                    int serial = marker++;
-                    node[CacheNode] = serial;
-                    nodes.Add(serial, node);
-                }
-            };
-
-            // add serials
-            await JsonEntityVisitor(compacted, addSerial);
-
-            var flattened = JsonLdProcessor.Flatten(compacted, new JsonLdOptions());
-            BasicGraph graph = GetGraph(flattened);
-
-            // split out the cache triples
-            HashSet<Triple> cacheTriples = new HashSet<Triple>();
-            HashSet<Triple> normalTriples = new HashSet<Triple>();
-
-            foreach(var triple in graph.Triples)
-            {
-                if (StringComparer.Ordinal.Equals(triple.Predicate.GetValue(), CacheNode))
-                {
-                    cacheTriples.Add(triple);
-                }
-                else
-                {
-                    normalTriples.Add(triple);
-                }
-            }
-
-            // create the real graph
-            JsonLdGraphOld jsonGraph = new JsonLdGraphOld();
-
-            var cacheGraph = new BasicGraph(cacheTriples);
-
-            foreach (var triple in normalTriples)
-            {
-                var cacheTriple = cacheGraph.SelectSubject(triple.Subject.GetValue()).FirstOrDefault();
-
-                JToken token = null;
-
-                if (cacheTriple != null)
-                {
-                    int serial;
-                    if (Int32.TryParse(cacheTriple.Object.GetValue(), out serial))
-                    {
-                        token = nodes[serial];
-                    }
-                }
-
-                var jsonTriple = new JsonLdTriple(page, token, triple.Subject, triple.Predicate, triple.Object);
-                jsonGraph.Assert(jsonTriple);
-            }
-
-            // put the json back to normal
-            foreach(var node in nodes.Values)
-            {
-                JObject jObj = node as JObject;
-                jObj.Remove(CacheNode);
-            }
+            JsonLdGraph jsonGraph = JsonLdGraph.Load(compacted, page);
 
             lock (this)
             {
@@ -196,7 +157,7 @@ namespace NuGet.Data
                 while (_masterGraph.Count > maxTriples)
                 {
                     var removePage = _pages.Dequeue();
-                    _masterGraph.Triples.RemoveWhere(t => t.Page.Equals(removePage));
+                    _masterGraph.RemovePage(removePage);
                     reduced = true;
                 }
             }
@@ -204,90 +165,26 @@ namespace NuGet.Data
             return reduced;
         }
 
-        private const string CompactedIdName = "url";
-        private const string ContextName = "@context";
-
-        private static bool IsInContext(JToken token)
-        {
-            JToken parent = token;
-
-            while (parent != null)
-            {
-                JProperty prop = parent as JProperty;
-
-                if (prop != null && StringComparer.Ordinal.Equals(prop.Name, ContextName))
-                {
-                    return true;
-                }
-
-                parent = parent.Parent;
-            }
-
-            return false;
-        }
-
-        private static bool IsEntity(JToken jToken)
-        {
-            JProperty prop = jToken as JProperty;
-
-            return prop != null && StringComparer.Ordinal.Equals(prop.Name, CompactedIdName);
-        }
-
-        public async Task JsonEntityVisitor(JObject root, Action<JObject> visitor)
-        {
-            var props = root
-                .Descendants()
-                .Where(t => t.Type == JTokenType.Property)
-                .Cast<JProperty>()
-                .Where(p => Utility.IdNames.Contains(p.Name))
-                .ToList();
-
-            foreach (var prop in props)
-            {
-                visitor((JObject)prop.Parent);
-            }
-        }
 
         public async Task<JToken> GetEntity(Uri entity)
         {
-            JToken token = null;
-
-            lock (this)
-            {
-                var triple = _masterGraph.Triples.Where(t => StringComparer.Ordinal.Equals(t.Subject.GetValue(), entity.AbsoluteUri)).FirstOrDefault();
-
-                if (triple != null)
+            return await Task<JToken>.Run(() =>
                 {
-                    token = triple.JsonNode;
-                }
-            }
+                    JToken token = null;
 
-            return token;
-        }
+                    lock (this)
+                    {
+                        // find the best JToken for this subject that we have
+                        JsonLdTriple triple = _masterGraph.SelectSubject(entity).Where(n => n.JsonNode != null).OrderByDescending(t => t.HasIdMatchingUrl ? 1 : 0).FirstOrDefault();
 
-        //public async Task<BasicGraph> DescribeRecursive(Uri entity)
-        //{
-        //    lock (this)
-        //    {
-        //        return _masterGraph.RecursiveDescribe(entity);
-        //    }
-        //}
+                        if (triple != null)
+                        {
+                            token = triple.JsonNode;
+                        }
+                    }
 
-        private static BasicGraph GetGraph(JToken flattened)
-        {
-            BasicGraph graph = new BasicGraph();
-
-            RDFDataset dataSet = (RDFDataset)JsonLD.Core.JsonLdProcessor.ToRDF(flattened);
-
-            foreach (var graphName in dataSet.GraphNames())
-            {
-                foreach (var quad in dataSet.GetQuads(graphName))
-                {
-                    graph.Assert(quad);
-                }
-            }
-
-            return graph;
+                    return token;
+                });
         }
     }
 }

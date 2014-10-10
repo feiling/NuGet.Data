@@ -9,7 +9,7 @@ using Node = JsonLD.Core.RDFDataset.Node;
 
 namespace NuGet.Data
 {
-    public class JsonLdGraph : JsonLdTripleCollection
+    public partial class JsonLdGraph : JsonLdTripleCollection
     {
         // triples containing the most complete JTokens
         private readonly HashSet<JsonLdTriple> _triples;
@@ -18,6 +18,12 @@ namespace NuGet.Data
         private readonly List<JsonLdTriple> _alternativeTriples;
 
         private readonly Dictionary<Node, JsonLdTriple> _subjectIndex;
+
+        public JsonLdGraph()
+            : base(Enumerable.Empty<JsonLdTriple>())
+        {
+
+        }
 
         public JsonLdGraph(IEnumerable<JsonLdTriple> triples)
             : base(null)
@@ -54,9 +60,14 @@ namespace NuGet.Data
                     return _triples.Count;
                 }
             }
-        } 
+        }
 
-        public void Assert(JsonLdPage page, JToken jsonNode, Node subNode, Node predNode, Node objNode)
+        public void RemovePage(JsonLdPage page)
+        {
+            throw new NotImplementedException();
+        }
+
+        public void Assert(JsonLdPage page, JObject jsonNode, Node subNode, Node predNode, Node objNode)
         {
             _triples.Add(new JsonLdTriple(page, jsonNode, subNode, predNode, objNode));
         }
@@ -68,6 +79,15 @@ namespace NuGet.Data
                 
             }
         }
+
+        public IEnumerable<JsonLdTriple> SelectSubject(Uri uri)
+        {
+            lock (this)
+            {
+                throw new NotImplementedException();
+            }
+        }
+
 
         /// <summary>
         /// triples containing the most complete JTokens
