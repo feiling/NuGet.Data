@@ -55,19 +55,38 @@ namespace NuGet.Data
             _entityCache = new EntityCache();
         }
 
+
+        /// <summary>
+        /// Retrieves a url with caching.
+        /// </summary>
+        /// <param name="uri"></param>
+        /// <returns></returns>
+        public async Task<JObject> GetFile(Uri uri)
+        {
+            return await GetFile(uri, TimeSpan.FromHours(2), true);
+        }
+
+        /// <summary>
+        /// Retrieves a url with no caching.
+        /// </summary>
+        /// <param name="uri"></param>
+        /// <returns></returns>
+        public async Task<JObject> GetFileNoCache(Uri uri)
+        {
+            return await GetFile(uri, TimeSpan.MinValue, false);
+        }
+
         /// <summary>
         /// Retrieves a url and returns it as it is.
         /// </summary>
         /// <param name="uri"></param>
         /// <returns></returns>
-        public async Task<JObject> GetFile(Uri uri, bool cache=true)
+        public async Task<JObject> GetFile(Uri uri, TimeSpan cacheTime, bool cacheInGraph=true)
         {
-            Uri fixedUri = uri;
+            bool cache = cacheTime.TotalSeconds > 0;
 
-            if (uri.AbsoluteUri.IndexOf('#') > -1)
-            {
-                fixedUri = new Uri(uri.AbsoluteUri.Split('#')[0]);
-            }
+            // request the root document
+            Uri fixedUri = Utility.GetUriWithoutHash(uri);
 
             Stream stream = null;
             JObject result = null;
@@ -155,7 +174,7 @@ namespace NuGet.Data
                 // this must be called before the entity cache thread starts using it
                 clonedResult = result.DeepClone() as JObject;
 
-                if (cache)
+                if (cacheInGraph)
                 {
                     // this call is only blocking if the cache is overloaded
                     _entityCache.Add(result, fixedUri);

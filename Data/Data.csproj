@@ -77,7 +77,6 @@
     <Compile Include="JsonLdExtensions.cs" />
     <Compile Include="JsonLdGraph\JsonLdGraph.cs" />
     <Compile Include="JsonLdGraph\JsonLdGraphFactory.cs" />
-    <Compile Include="JsonLdGraph\JsonLdGraphOld.cs" />
     <Compile Include="JsonLdGraph\JsonLdPage.cs" />
     <Compile Include="JsonLdGraph\JsonLdTriple.cs" />
     <Compile Include="JsonLdGraph\JsonLdTripleCollection.cs" />
