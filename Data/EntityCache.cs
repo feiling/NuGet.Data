@@ -103,6 +103,18 @@ namespace NuGet.Data
                 DataTraceSources.Verbose("[EntityCache] Invalid JsonLd skipping {0}", pageUri.AbsoluteUri);
                 return;
             }
+            else
+            {
+                Uri rootUri = Utility.GetEntityUri(compacted);
+
+                if (rootUri == null)
+                {
+                    // remove the blank node
+                    string blankUrl = "http://blanknode.nuget.org/" + Guid.NewGuid().ToString();
+                    compacted["@id"] = blankUrl;
+                    DataTraceSources.Verbose("[EntityCache] BlankNode Doc {0}", blankUrl);
+                }
+            }
 
             lock (this)
             {
@@ -121,9 +133,10 @@ namespace NuGet.Data
             Dictionary<int, JToken> nodes = new Dictionary<int,JToken>();
             int marker = 0;
 
-            Action<JToken> addSerial = (node) =>
+            // Visitor
+            Action<JObject> addSerial = (node) =>
             {
-                if (node is JObject && !IsInContext(node))
+                if (!IsInContext(node))
                 {
                     int serial = marker++;
                     node[CacheNode] = serial;
@@ -236,34 +249,18 @@ namespace NuGet.Data
             return prop != null && StringComparer.Ordinal.Equals(prop.Name, CompactedIdName);
         }
 
-        public async Task JsonEntityVisitor(JObject root, Action<JToken> visitor)
+        public async Task JsonEntityVisitor(JObject root, Action<JObject> visitor)
         {
-            //var nodes = root.Descendants().Concat(root).ToList();
-
-            //foreach (var node in nodes)
-            //{
-            //    visitor(node);
-            //}
-
-            HashSet<string> idNames = null;
-            JToken context = null;
-            if (root.TryGetValue(ContextName, out context))
-            {
-                idNames = GetIdNames(context);
-            }
-            else
-            {
-                idNames = new HashSet<string>() { "url" };
-            }
-
-            var props = root.Properties().ToList();
+            var props = root
+                .Descendants()
+                .Where(t => t.Type == JTokenType.Property)
+                .Cast<JProperty>()
+                .Where(p => Utility.IdNames.Contains(p.Name))
+                .ToList();
 
             foreach (var prop in props)
             {
-                if (idNames.Contains(prop.Name))
-                {
-                    visitor(prop.Parent);
-                }
+                visitor((JObject)prop.Parent);
             }
         }
 

@@ -9,9 +9,14 @@ namespace NuGet.Data
 {
     public static class Utility
     {
+        /// <summary>
+        /// True if this object has @context
+        /// </summary>
+        /// <param name="compacted"></param>
+        /// <returns></returns>
         public static bool IsValidJsonLd(JObject compacted)
         {
-            return compacted != null && GetEntityUri(compacted) != null;
+            return compacted != null && GetContext(compacted) != null;
         }
 
         public static readonly string[] IdNames = new string[] { "url", "@id" };
@@ -84,6 +89,21 @@ namespace NuGet.Data
             }
 
             return parent;
+        }
+
+        public static JToken GetContext(JObject jObj)
+        {
+            if (jObj != null)
+            {
+                JToken context;
+
+                if (jObj.TryGetValue("@context", out context))
+                {
+                    return context;
+                }
+            }
+
+            return null;
         }
 
         public static Uri GetEntityUri(JObject jObj)
