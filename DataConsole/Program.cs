@@ -19,6 +19,9 @@ namespace DataConsole
 
         private static async Task Run()
         {
+            Stopwatch timer = new Stopwatch();
+            timer.Start();
+
             try
             {
                 JObject context = JObject.Parse(@"{
@@ -103,6 +106,31 @@ namespace DataConsole
                 var rootCommitId = rootEnsure["commitId"];
 
                 var rootEnsure2 = await cache.Ensure(rootEntity, new Uri[] { new Uri("http://schema.nuget.org/schema#nonexistant") });
+
+                Uri root = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver33/registrations/newtonsoft.json/index.json");
+
+                var rootJObj = await cache.GetFile(root);
+
+                foreach (var token in rootJObj["items"])
+                {
+                    JObject child = token as JObject;
+
+                    JToken typeToken = null;
+                    if (child.TryGetValue("@type", out typeToken) && typeToken.ToString() == "catalog:CatalogPage")
+                    {
+                        Parallel.ForEach(child["items"], packageToken =>
+                        {
+                            var catalogEntry = packageToken["catalogEntry"];
+
+                            var w = cache.Ensure(catalogEntry, new Uri[] { new Uri("http://schema.nuget.org/schema#tag") });
+                            w.Wait();
+
+                            Console.WriteLine(w.Result["tag"]);
+                        });
+                    }
+                }
+
+                Console.WriteLine(timer.Elapsed);
             }
             catch (Exception ex)
             {

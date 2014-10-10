@@ -20,6 +20,8 @@ namespace NuGet.Data
         private readonly Queue<JsonLdPage> _pages;
         private readonly ConcurrentQueue<Task> _addTasks;
         private const int _maxAdds = 5;
+
+        // TODO: at what triple count does perf start to drop off?
         private const int _maxEntityCacheSize = 50000;
 
         public EntityCache()
@@ -33,10 +35,7 @@ namespace NuGet.Data
         {
             JsonLdPage page = new JsonLdPage(Utility.GetUriWithoutHash(entity));
 
-            lock (this)
-            {
-                return _pages.Contains(page);
-            }
+            return _pages.Contains(page);
         }
 
         /// <summary>
@@ -177,23 +176,32 @@ namespace NuGet.Data
         }
 
 
+        /// <summary>
+        /// Look up the entity in the cache.
+        /// </summary>
         public async Task<JToken> GetEntity(Uri entity)
         {
             return await Task<JToken>.Run(() =>
                 {
                     JToken token = null;
 
+                    DataTraceSources.Verbose("[EntityCache] GetEntity {0}", entity.AbsoluteUri);
+
                     WaitForTasks();
+
+                    JsonLdTripleCollection triples = null;
 
                     lock (this)
                     {
                         // find the best JToken for this subject that we have
-                        JsonLdTriple triple = _masterGraph.SelectSubject(entity).Where(n => n.JsonNode != null).OrderByDescending(t => t.HasIdMatchingUrl ? 1 : 0).FirstOrDefault();
+                        triples = _masterGraph.SelectSubject(entity);
+                    }
 
-                        if (triple != null)
-                        {
-                            token = triple.JsonNode;
-                        }
+                    JsonLdTriple triple = triples.Where(n => n.JsonNode != null).OrderByDescending(t => t.HasIdMatchingUrl ? 1 : 0).FirstOrDefault();
+
+                    if (triple != null)
+                    {
+                        token = triple.JsonNode;
                     }
 
                     return token;

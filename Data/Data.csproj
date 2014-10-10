@@ -68,6 +68,7 @@
     <Compile Include="BrowserCache\BrowserCache.cs" />
     <Compile Include="BrowserFileCache.cs" />
     <Compile Include="CacheHttpClient.cs" />
+    <Compile Include="CompactEntityReader.cs" />
     <Compile Include="Constants.cs" />
     <Compile Include="DataTraceSources.cs" />
     <Compile Include="EntityCache.cs" />

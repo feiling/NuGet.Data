@@ -12,5 +12,6 @@ namespace NuGet.Data
         public const string IdName = "@id";
         public const string UrlIdName = "url";
         public const string CacheNode = "http://nuget.org/cache/node";
+        public const string NuGetVocab = "http://schema.nuget.org/schema#";
     }
 }

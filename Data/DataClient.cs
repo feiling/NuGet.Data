@@ -116,11 +116,6 @@ namespace NuGet.Data
 
                                 if (response.StatusCode == HttpStatusCode.OK)
                                 {
-                                    if (!response.Headers.CacheControl.NoStore)
-                                    {
-                                        // TODO: Determine the real lifespan from the headers
-                                    }
-
                                     stream = await response.Content.ReadAsStreamAsync();
 
                                     if (stream != null)
@@ -222,35 +217,50 @@ namespace NuGet.Data
         /// <returns>The same JToken if it already exists, otherwise the fetched JToken.</returns>
         public async Task<JToken> Ensure(JToken token, IEnumerable<Uri> properties)
         {
-            if (Utility.IsEntityFromPage(token) == false)
+            JObject jObject = token as JObject;
+
+            if (jObject != null)
             {
-                Uri entity = Utility.GetEntityUri(token);
+                CompactEntityReader compactEntity = new CompactEntityReader(jObject);
 
-                if (entity != null)
+                // if the entity is found on it's originating page we know it is already complete in this compact form
+                if (compactEntity.IsFromPage == false)
                 {
-                    // determine if we should fetch the page or give up
-                    bool? fetch = await _entityCache.FetchNeeded(entity, properties);
-
-                    // we are missing properties and do not have the page
-                    if (fetch == true)
+                    if (compactEntity.EntityUri != null)
                     {
-                        await GetFile(entity);
-                    }
+                        // inspect the compact entity on a basic level to determine if it already has the properties it asked for
+                        if (compactEntity.HasPredicates(properties) != true)
+                        {
+                            // at this point we know the compact token does not include the needed properties,
+                            // we need to either download the file it lives on, or find it in the entity cache
 
-                    // null means either there is no work to do, or that we gave up, return the original token here
-                    if (fetch != null)
-                    {
-                        return await _entityCache.GetEntity(entity);
+                            // determine if we should fetch the page or give up
+                            // TODO: the page could in a race case get dropped between FetchNeeded and GetEntity
+                            bool? fetch = await _entityCache.FetchNeeded(compactEntity.EntityUri, properties);
+
+                            if (fetch == true)
+                            {
+                                // we are missing properties and do not have the page
+                                DataTraceSources.Verbose("[DataClient] GetFile required to Ensure {0}", compactEntity.EntityUri.AbsoluteUri);
+                                await GetFile(compactEntity.EntityUri);
+                            }
+
+                            // null means either there is no work to do, or that we gave up, return the original token here
+                            if (fetch != null)
+                            {
+                                return await _entityCache.GetEntity(compactEntity.EntityUri);
+                            }
+                        }
                     }
-                }
-                else
-                {
-                    DataTraceSources.Verbose("[EntityCache] Unable to find entity @id!");
+                    else
+                    {
+                        DataTraceSources.Verbose("[EntityCache] Unable to find entity @id!");
+                    }
                 }
             }
             else
             {
-                DataTraceSources.Verbose("[EntityCache] Entity is from this page.");
+                DataTraceSources.Verbose("[EntityCache] Non-JObject, unable to use this!");
             }
 
             return token;
