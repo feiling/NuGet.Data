@@ -28,6 +28,7 @@ namespace DataTest
             Assert.Equal(0, graph.AlternativeTriples.Count());
         }
 
+        [Fact]
         public void JsonLdGraph_RemovePage()
         {
             JObject compacted = BasicGraph;

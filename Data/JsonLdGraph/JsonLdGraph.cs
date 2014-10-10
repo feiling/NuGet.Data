@@ -130,6 +130,16 @@ namespace NuGet.Data
                         _subjectIndex.Remove(subject);
                     }
                 }
+
+                // todo: optimize this
+                var alts = _alternativeTriples.ToArray();
+                _alternativeTriples.Clear();
+
+                // re-merge all alts
+                foreach (var alt in alts)
+                {
+                    AssertNoLock(alt);
+                }
             }
         }
 

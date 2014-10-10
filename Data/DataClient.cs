@@ -71,6 +71,7 @@ namespace NuGet.Data
 
             Stream stream = null;
             JObject result = null;
+            JObject clonedResult = null; // the copy we give the caller
 
             try
             {
@@ -149,18 +150,19 @@ namespace NuGet.Data
                 }
             }
 
-            if (result != null && cache)
-            {
-                // this call is only blocking if the cache is overloaded
-                _entityCache.Add(result, fixedUri);
-            }
-
             if (result != null)
             {
-                result = result.DeepClone() as JObject;
+                // this must be called before the entity cache thread starts using it
+                clonedResult = result.DeepClone() as JObject;
+
+                if (cache)
+                {
+                    // this call is only blocking if the cache is overloaded
+                    _entityCache.Add(result, fixedUri);
+                }
             }
 
-            return result;
+            return clonedResult;
         }
 
         /// <summary>

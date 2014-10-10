@@ -60,9 +60,11 @@ namespace NuGet.Data
                 // otherwise check if we already have the pieces
                 IEnumerable<JsonLdTriple> triples = null;
 
+                WaitForTasks();
+
                 lock (this)
                 {
-                    triples = _masterGraph.Triples.Where(t => StringComparer.Ordinal.Equals(entity.AbsoluteUri, t.Subject.GetValue()));
+                    triples = _masterGraph.SelectSubject(entity);
                 }
 
                 bool missing = false;
@@ -85,34 +87,39 @@ namespace NuGet.Data
             return result;
         }
 
+        /// <summary>
+        /// A minimally blocking call that starts a background task to update the graph.
+        /// </summary>
+        /// <param name="compacted"></param>
+        /// <param name="pageUri"></param>
         public void Add(JObject compacted, Uri pageUri)
-        {
-            // this is probably thread safe enough, but just to avoid too many dequeues and waits at the same time
-            lock (this)
-            {
-                Reduce(_maxEntityCacheSize);
-
-                if (_addTasks.Count >= _maxAdds)
-                {
-                    // force a wait if we are over the limit
-                    Task curTask = null;
-                    if (_addTasks.TryDequeue(out curTask))
-                    {
-                        curTask.Wait();
-                    }
-                }
-
-                _addTasks.Enqueue(Task.Run(() => AddInternal(compacted, pageUri)));
-            }
-        }
-
-        private void AddInternal(JObject compacted, Uri pageUri)
         {
             JsonLdPage page = new JsonLdPage(pageUri);
 
+            // TODO: does this need a limiter?
+            _addTasks.Enqueue(Task.Run(() => AddInternal(compacted, page)));
+        }
+
+        /// <summary>
+        /// Waits until all queued tasks have completed. Do not run this from inside a lock!
+        /// </summary>
+        private void WaitForTasks()
+        {
+            while (_addTasks.Count > 0)
+            {
+                Task task = null;
+                if (_addTasks.TryDequeue(out task))
+                {
+                    task.Wait();
+                }
+            }
+        }
+
+        private void AddInternal(JObject compacted, JsonLdPage page)
+        {
             if (!Utility.IsValidJsonLd(compacted))
             {
-                DataTraceSources.Verbose("[EntityCache] Invalid JsonLd skipping {0}", pageUri.AbsoluteUri);
+                DataTraceSources.Verbose("[EntityCache] Invalid JsonLd skipping {0}", page.Uri.AbsoluteUri);
                 return;
             }
             else
@@ -132,18 +139,22 @@ namespace NuGet.Data
             {
                 if (_pages.Contains(page))
                 {
-                    // no work to do here.
                     return;
                 }
 
-                DataTraceSources.Verbose("[EntityCache] Added {0}", pageUri.AbsoluteUri);
                 _pages.Enqueue(page);
             }
 
+            DataTraceSources.Verbose("[EntityCache] Added {0}", page.Uri.AbsoluteUri);
+
+            // Load
             JsonLdGraph jsonGraph = JsonLdGraph.Load(compacted, page);
 
             lock (this)
             {
+                // Reduce the cache before adding anything new, this could potentially block a while
+                Reduce(_maxEntityCacheSize);
+
                 _masterGraph.Merge(jsonGraph);
             }
         }
@@ -171,6 +182,8 @@ namespace NuGet.Data
             return await Task<JToken>.Run(() =>
                 {
                     JToken token = null;
+
+                    WaitForTasks();
 
                     lock (this)
                     {
