@@ -24,6 +24,9 @@ namespace NuGet.Data
             _jsonPage = page;
         }
 
+        /// <summary>
+        /// The original compacted token of the Subject node.
+        /// </summary>
         public JToken JsonNode
         {
             get
@@ -32,6 +35,10 @@ namespace NuGet.Data
             }
         }
 
+        /// <summary>
+        /// True if this the entity came from a page with the same base url.
+        /// </summary>
+        /// <remarks>This would mean that everything is now known about the subject based on the NuGet graph rules.</remarks>
         public bool HasIdMatchingUrl
         {
             get
@@ -40,12 +47,23 @@ namespace NuGet.Data
             }
         }
 
+        /// <summary>
+        /// The page this data originally came from.
+        /// </summary>
         public JsonLdPage Page
         {
             get
             {
                 return _jsonPage;
             }
+        }
+
+        /// <summary>
+        /// True if the Page uri and JToken reference are also equal.
+        /// </summary>
+        public bool IsExactSame(JsonLdTriple other)
+        {
+            return JsonNode.Equals(other.JsonNode) && Page.Equals(other.Page) && base.Equals(other);
         }
     }
 }

@@ -248,26 +248,6 @@ namespace NuGet.Data
             }
         }
 
-        private static HashSet<string> GetIdNames(JToken context)
-        {
-            var set = new HashSet<string>();
-            JObject jObj = context as JObject;
-
-            var props = jObj.Properties();
-            foreach (var prop in props)
-            {
-                string val = prop.Value.ToString();
-
-                // TODO: Make this more robust
-                if (val == "@id" || val == "{\r\n  \"@type\": \"@id\"\r\n}")
-                {
-                    set.Add(prop.Name.ToString());
-                }
-            }
-
-            return set;
-        }
-
         public async Task<JToken> GetEntity(Uri entity)
         {
             JToken token = null;

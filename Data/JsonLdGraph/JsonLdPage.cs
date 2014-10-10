@@ -21,6 +21,9 @@ namespace NuGet.Data
             _uri = uri;
         }
 
+        /// <summary>
+        /// Address of the file.
+        /// </summary>
         public Uri Uri
         {
             get
@@ -29,11 +32,19 @@ namespace NuGet.Data
             }
         }
 
+        /// <summary>
+        /// True if the uri without the hash matches this page uri.
+        /// </summary>
+        /// <param name="uri"></param>
+        /// <returns></returns>
         public bool IsEntityFromPage(Uri uri)
         {
             return Utility.CompareRootUris(_uri, uri);
         }
 
+        /// <summary>
+        /// Uri compare
+        /// </summary>
         public bool Equals(JsonLdPage other)
         {
             return Uri.Equals(other.Uri);

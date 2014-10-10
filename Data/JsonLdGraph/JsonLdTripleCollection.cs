@@ -6,16 +6,16 @@ using System.Threading.Tasks;
 
 namespace NuGet.Data
 {
-    public class JsonLdTripleCollection : IReadOnlyCollection<JsonLdTriple>
+    public class JsonLdTripleCollection : IEnumerable<JsonLdTriple>
     {
-        private readonly IReadOnlyCollection<JsonLdTriple> _tripleCollection;
+        private readonly IEnumerable<JsonLdTriple> _tripleCollection;
 
-        public JsonLdTripleCollection(IReadOnlyCollection<JsonLdTriple> triples)
+        public JsonLdTripleCollection(IEnumerable<JsonLdTriple> triples)
         {
             _tripleCollection = triples;
         }
 
-        public virtual IReadOnlyCollection<JsonLdTriple> Triples
+        public virtual IEnumerable<JsonLdTriple> Triples
         {
             get
             {
@@ -23,9 +23,12 @@ namespace NuGet.Data
             }
         }
 
-        public int Count
+        public virtual int Count
         {
-            get { return _tripleCollection.Count; }
+            get
+            {
+                return Triples.Count();
+            }
         }
 
         public IEnumerator<JsonLdTriple> GetEnumerator()
