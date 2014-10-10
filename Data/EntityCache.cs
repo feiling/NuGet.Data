@@ -98,6 +98,12 @@ namespace NuGet.Data
         {
             JsonLdPage page = new JsonLdPage(pageUri);
 
+            if (!Utility.IsValidJsonLd(compacted))
+            {
+                DataTraceSources.Verbose("[EntityCache] Invalid JsonLd skipping {0}", pageUri.AbsoluteUri);
+                return;
+            }
+
             lock (this)
             {
                 if (_pages.Contains(page))
