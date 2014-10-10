@@ -24,7 +24,21 @@ namespace DataTest
 
             JsonLdGraph graph = JsonLdGraph.Load(compacted, page);
 
-            Assert.Equal(10, graph.Triples.Count());
+            Assert.Equal(17, graph.Triples.Count());
+            Assert.Equal(0, graph.AlternativeTriples.Count());
+        }
+
+        public void JsonLdGraph_RemovePage()
+        {
+            JObject compacted = BasicGraph;
+
+            JsonLdPage page = new JsonLdPage(new Uri("http://test/doc"));
+
+            JsonLdGraph graph = JsonLdGraph.Load(compacted, page);
+
+            graph.RemovePage(page);
+
+            Assert.Equal(0, graph.Triples.Count());
             Assert.Equal(0, graph.AlternativeTriples.Count());
         }
 

@@ -6,6 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using JsonLD.Core;
 using Node = JsonLD.Core.RDFDataset.Node;
+using System.Globalization;
 
 namespace NuGet.Data
 {
@@ -27,7 +28,7 @@ namespace NuGet.Data
         /// <summary>
         /// The original compacted token of the Subject node.
         /// </summary>
-        public JToken JsonNode
+        public JObject JsonNode
         {
             get
             {
@@ -64,6 +65,11 @@ namespace NuGet.Data
         public bool IsExactSame(JsonLdTriple other)
         {
             return JsonNode.Equals(other.JsonNode) && Page.Equals(other.Page) && base.Equals(other);
+        }
+
+        public override string ToString()
+        {
+            return String.Format(CultureInfo.InvariantCulture, "{0} {1} {2} {3} {4}", Subject.GetValue(), Predicate.GetValue(), Object.GetValue(), JsonNode == null ? "NoJson" : "Json", Page);
         }
     }
 }

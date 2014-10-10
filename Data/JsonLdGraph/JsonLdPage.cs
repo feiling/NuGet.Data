@@ -49,5 +49,10 @@ namespace NuGet.Data
         {
             return Uri.Equals(other.Uri);
         }
+
+        public override string ToString()
+        {
+            return Uri.AbsoluteUri;
+        }
     }
 }
