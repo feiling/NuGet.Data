@@ -2,6 +2,7 @@
 using Newtonsoft.Json;
 using Newtonsoft.Json.Linq;
 using System;
+using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Linq;
@@ -10,41 +11,31 @@ using System.Threading.Tasks;
 
 namespace NuGet.Data
 {
+    /// <summary>
+    /// Thread safe cache of graphs.
+    /// </summary>
     public class EntityCache
     {
-        private const string CacheNode = "http://nuget.org/cache/node";
         private readonly JsonLdGraph _masterGraph;
         private readonly Queue<JsonLdPage> _pages;
+        private readonly ConcurrentQueue<Task> _addTasks;
+        private const int _maxAdds = 5;
+        private const int _maxEntityCacheSize = 50000;
 
         public EntityCache()
         {
             _masterGraph = new JsonLdGraph();
             _pages = new Queue<JsonLdPage>();
+            _addTasks = new ConcurrentQueue<Task>();
         }
 
         public bool HasPageOfEntity(Uri entity)
         {
-            JsonLdPage page = new JsonLdPage(GetUriWithoutHash(entity));
+            JsonLdPage page = new JsonLdPage(Utility.GetUriWithoutHash(entity));
 
             lock (this)
             {
                 return _pages.Contains(page);
-            }
-        }
-
-        private Uri GetUriWithoutHash(Uri uri)
-        {
-            string s = uri.AbsoluteUri;
-            int hash = s.IndexOf('#');
-
-            if (hash > -1)
-            {
-                s = s.Substring(0, hash);
-                return new Uri(s);
-            }
-            else
-            {
-                return uri;
             }
         }
 
@@ -69,9 +60,11 @@ namespace NuGet.Data
                 // otherwise check if we already have the pieces
                 IEnumerable<JsonLdTriple> triples = null;
 
+                WaitForTasks();
+
                 lock (this)
                 {
-                    triples = _masterGraph.Triples.Where(t => StringComparer.Ordinal.Equals(entity.AbsoluteUri, t.Subject.GetValue()));
+                    triples = _masterGraph.SelectSubject(entity);
                 }
 
                 bool missing = false;
@@ -94,13 +87,39 @@ namespace NuGet.Data
             return result;
         }
 
-        public async Task Add(JObject compacted, Uri pageUri)
+        /// <summary>
+        /// A minimally blocking call that starts a background task to update the graph.
+        /// </summary>
+        /// <param name="compacted"></param>
+        /// <param name="pageUri"></param>
+        public void Add(JObject compacted, Uri pageUri)
         {
             JsonLdPage page = new JsonLdPage(pageUri);
 
+            // TODO: does this need a limiter?
+            _addTasks.Enqueue(Task.Run(() => AddInternal(compacted, page)));
+        }
+
+        /// <summary>
+        /// Waits until all queued tasks have completed. Do not run this from inside a lock!
+        /// </summary>
+        private void WaitForTasks()
+        {
+            while (_addTasks.Count > 0)
+            {
+                Task task = null;
+                if (_addTasks.TryDequeue(out task))
+                {
+                    task.Wait();
+                }
+            }
+        }
+
+        private void AddInternal(JObject compacted, JsonLdPage page)
+        {
             if (!Utility.IsValidJsonLd(compacted))
             {
-                DataTraceSources.Verbose("[EntityCache] Invalid JsonLd skipping {0}", pageUri.AbsoluteUri);
+                DataTraceSources.Verbose("[EntityCache] Invalid JsonLd skipping {0}", page.Uri.AbsoluteUri);
                 return;
             }
             else
@@ -120,85 +139,22 @@ namespace NuGet.Data
             {
                 if (_pages.Contains(page))
                 {
-                    // no work to do here.
                     return;
                 }
 
-                DataTraceSources.Verbose("[EntityCache] Added {0}", pageUri.AbsoluteUri);
                 _pages.Enqueue(page);
             }
 
-            HashSet<JToken> entityNodes = new HashSet<JToken>();
+            DataTraceSources.Verbose("[EntityCache] Added {0}", page.Uri.AbsoluteUri);
 
-            Dictionary<int, JToken> nodes = new Dictionary<int,JToken>();
-            int marker = 0;
-
-            // Visitor
-            Action<JObject> addSerial = (node) =>
-            {
-                if (!IsInContext(node))
-                {
-                    int serial = marker++;
-                    node[CacheNode] = serial;
-                    nodes.Add(serial, node);
-                }
-            };
-
-            // add serials
-            await JsonEntityVisitor(compacted, addSerial);
-
-            var flattened = JsonLdProcessor.Flatten(compacted, new JsonLdOptions());
-            BasicGraph graph = GetGraph(flattened);
-
-            // split out the cache triples
-            HashSet<Triple> cacheTriples = new HashSet<Triple>();
-            HashSet<Triple> normalTriples = new HashSet<Triple>();
-
-            foreach(var triple in graph.Triples)
-            {
-                if (StringComparer.Ordinal.Equals(triple.Predicate.GetValue(), CacheNode))
-                {
-                    cacheTriples.Add(triple);
-                }
-                else
-                {
-                    normalTriples.Add(triple);
-                }
-            }
-
-            // create the real graph
-            JsonLdGraph jsonGraph = new JsonLdGraph();
-
-            var cacheGraph = new BasicGraph(cacheTriples);
-
-            foreach (var triple in normalTriples)
-            {
-                var cacheTriple = cacheGraph.SelectSubject(triple.Subject.GetValue()).FirstOrDefault();
-
-                JToken token = null;
-
-                if (cacheTriple != null)
-                {
-                    int serial;
-                    if (Int32.TryParse(cacheTriple.Object.GetValue(), out serial))
-                    {
-                        token = nodes[serial];
-                    }
-                }
-
-                var jsonTriple = new JsonLdTriple(page, token, triple.Subject, triple.Predicate, triple.Object);
-                jsonGraph.Assert(jsonTriple);
-            }
-
-            // put the json back to normal
-            foreach(var node in nodes.Values)
-            {
-                JObject jObj = node as JObject;
-                jObj.Remove(CacheNode);
-            }
+            // Load
+            JsonLdGraph jsonGraph = JsonLdGraph.Load(compacted, page);
 
             lock (this)
             {
+                // Reduce the cache before adding anything new, this could potentially block a while
+                Reduce(_maxEntityCacheSize);
+
                 _masterGraph.Merge(jsonGraph);
             }
         }
@@ -212,7 +168,7 @@ namespace NuGet.Data
                 while (_masterGraph.Count > maxTriples)
                 {
                     var removePage = _pages.Dequeue();
-                    _masterGraph.Triples.RemoveWhere(t => t.Page.Equals(removePage));
+                    _masterGraph.RemovePage(removePage);
                     reduced = true;
                 }
             }
@@ -220,110 +176,28 @@ namespace NuGet.Data
             return reduced;
         }
 
-        private const string CompactedIdName = "url";
-        private const string ContextName = "@context";
-
-        private static bool IsInContext(JToken token)
-        {
-            JToken parent = token;
-
-            while (parent != null)
-            {
-                JProperty prop = parent as JProperty;
-
-                if (prop != null && StringComparer.Ordinal.Equals(prop.Name, ContextName))
-                {
-                    return true;
-                }
-
-                parent = parent.Parent;
-            }
-
-            return false;
-        }
-
-        private static bool IsEntity(JToken jToken)
-        {
-            JProperty prop = jToken as JProperty;
-
-            return prop != null && StringComparer.Ordinal.Equals(prop.Name, CompactedIdName);
-        }
-
-        public async Task JsonEntityVisitor(JObject root, Action<JObject> visitor)
-        {
-            var props = root
-                .Descendants()
-                .Where(t => t.Type == JTokenType.Property)
-                .Cast<JProperty>()
-                .Where(p => Utility.IdNames.Contains(p.Name))
-                .ToList();
-
-            foreach (var prop in props)
-            {
-                visitor((JObject)prop.Parent);
-            }
-        }
-
-        private static HashSet<string> GetIdNames(JToken context)
-        {
-            var set = new HashSet<string>();
-            JObject jObj = context as JObject;
-
-            var props = jObj.Properties();
-            foreach (var prop in props)
-            {
-                string val = prop.Value.ToString();
-
-                // TODO: Make this more robust
-                if (val == "@id" || val == "{\r\n  \"@type\": \"@id\"\r\n}")
-                {
-                    set.Add(prop.Name.ToString());
-                }
-            }
-
-            return set;
-        }
 
         public async Task<JToken> GetEntity(Uri entity)
         {
-            JToken token = null;
-
-            lock (this)
-            {
-                var triple = _masterGraph.Triples.Where(t => StringComparer.Ordinal.Equals(t.Subject.GetValue(), entity.AbsoluteUri)).FirstOrDefault();
-
-                if (triple != null)
+            return await Task<JToken>.Run(() =>
                 {
-                    token = triple.JsonNode;
-                }
-            }
+                    JToken token = null;
 
-            return token;
-        }
+                    WaitForTasks();
 
-        //public async Task<BasicGraph> DescribeRecursive(Uri entity)
-        //{
-        //    lock (this)
-        //    {
-        //        return _masterGraph.RecursiveDescribe(entity);
-        //    }
-        //}
+                    lock (this)
+                    {
+                        // find the best JToken for this subject that we have
+                        JsonLdTriple triple = _masterGraph.SelectSubject(entity).Where(n => n.JsonNode != null).OrderByDescending(t => t.HasIdMatchingUrl ? 1 : 0).FirstOrDefault();
 
-        private static BasicGraph GetGraph(JToken flattened)
-        {
-            BasicGraph graph = new BasicGraph();
+                        if (triple != null)
+                        {
+                            token = triple.JsonNode;
+                        }
+                    }
 
-            RDFDataset dataSet = (RDFDataset)JsonLD.Core.JsonLdProcessor.ToRDF(flattened);
-
-            foreach (var graphName in dataSet.GraphNames())
-            {
-                foreach (var quad in dataSet.GetQuads(graphName))
-                {
-                    graph.Assert(quad);
-                }
-            }
-
-            return graph;
+                    return token;
+                });
         }
     }
 }

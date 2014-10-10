@@ -21,7 +21,6 @@ namespace NuGet.Data
         private readonly JToken _context;
         private readonly EntityCache _entityCache;
         private static readonly TimeSpan _lifeSpan = TimeSpan.FromMinutes(5);
-        private const int _maxEntityCacheSize = 50000;
 
         /// <summary>
         /// DataClient with the default options.
@@ -72,6 +71,7 @@ namespace NuGet.Data
 
             Stream stream = null;
             JObject result = null;
+            JObject clonedResult = null; // the copy we give the caller
 
             try
             {
@@ -150,23 +150,19 @@ namespace NuGet.Data
                 }
             }
 
-            if (result != null && cache)
-            {
-                // reduce and add
-                if (_entityCache.Reduce(_maxEntityCacheSize))
-                {
-                    DataTraceSources.Verbose("[EntityCache] Reduced");
-                }
-
-                await _entityCache.Add(result, fixedUri);
-            }
-
             if (result != null)
             {
-                result = result.DeepClone() as JObject;
+                // this must be called before the entity cache thread starts using it
+                clonedResult = result.DeepClone() as JObject;
+
+                if (cache)
+                {
+                    // this call is only blocking if the cache is overloaded
+                    _entityCache.Add(result, fixedUri);
+                }
             }
 
-            return result;
+            return clonedResult;
         }
 
         /// <summary>
