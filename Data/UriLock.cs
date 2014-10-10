@@ -15,23 +15,23 @@ namespace NuGet.Data
     public class UriLock : IDisposable
     {
         // session wide locks
-        private static readonly ConcurrentDictionary<Uri, object> _locks = new ConcurrentDictionary<Uri, object>();
+        private static readonly ConcurrentDictionary<Uri, Guid> _locks = new ConcurrentDictionary<Uri, Guid>();
         private readonly Uri _uri;
         private readonly int _msWait;
+        private readonly Guid _guid;
 
         public UriLock(Uri uri, int msWait=100)
         {
             _uri = uri;
             _msWait = msWait;
+            _guid = new Guid();
 
             GetLock();
         }
 
         private void GetLock()
         {
-            object obj = new object();
-
-            while (!_locks.TryAdd(_uri, obj))
+            while (!_locks.TryAdd(_uri, _guid))
             {
                 // spin lock
                 Thread.Sleep(_msWait);
@@ -40,7 +40,7 @@ namespace NuGet.Data
 
         private void ReleaseLock()
         {
-            object obj = null;
+            Guid obj;
             if (!_locks.TryRemove(_uri, out obj))
             {
                 Debug.Fail("Missing lock object!");

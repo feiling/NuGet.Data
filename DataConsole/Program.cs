@@ -66,9 +66,14 @@ namespace DataConsole
                 //Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/microsoft.bcl/index.json");
                 Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/newtonsoft.json/index.json");
 
-                JObject jObj = await cache.GetFile(packageInfoUri);
+                var task = cache.GetFile(packageInfoUri);
+                var task2 = cache.GetFile(packageInfoUri);
+                var task3 = cache.GetFile(packageInfoUri);
+                var task4 = cache.GetFile(packageInfoUri);
+                var task5 = cache.GetFile(packageInfoUri);
 
-                JToken jObj2 = await cache.GetFile(packageInfoUri);
+                var jObj = await task2;
+                var jObj2 = await task;
 
                 EntityCache ec = new EntityCache();
                 await ec.Add(jObj, packageInfoUri);
@@ -79,12 +84,25 @@ namespace DataConsole
 
                 var id = blah["commitId"];
 
-                ////var myObj = await cache.GetInclusiveView(new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/entityframework/index.json"));
+                var search = await cache.GetFile(new Uri("http://preview-search.nuget.org/search/query"));
 
-                //using (StreamWriter writer = new StreamWriter(@"d:\out.json"))
-                //{
-                //    writer.Write(myObj.ToString());
-                //}
+                var newtonsoft = search["data"].First;
+
+                var ensureBlank = await cache.Ensure(newtonsoft, new Uri[] { });
+
+                var ensureProp = await cache.Ensure(newtonsoft, new Uri[] { new Uri("http://schema.nuget.org/schema#commitId") });
+
+                var id2 = ensureProp["commitId"];
+
+                
+                var rootUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver33/registrations/newtonsoft.json/index.json");
+
+                var rootEntity = await cache.GetEntity(rootUri);
+
+                var rootEnsure = await cache.Ensure(rootEntity, new Uri[] { new Uri("http://schema.nuget.org/schema#commitId") });
+                var rootCommitId = rootEnsure["commitId"];
+
+                var rootEnsure2 = await cache.Ensure(rootEntity, new Uri[] { new Uri("http://schema.nuget.org/schema#nonexistant") });
             }
             catch (Exception ex)
             {
