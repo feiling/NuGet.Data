@@ -114,6 +114,7 @@ namespace NuGet.Data
 
                                 var response = await _httpClient.SendAsync(request);
 
+                                Debug.Assert(response.StatusCode == HttpStatusCode.OK, "Received non-OK status code response from " + request.RequestUri.ToString());
                                 if (response.StatusCode == HttpStatusCode.OK)
                                 {
                                     stream = await response.Content.ReadAsStreamAsync();
@@ -217,6 +218,14 @@ namespace NuGet.Data
         /// <returns>The same JToken if it already exists, otherwise the fetched JToken.</returns>
         public async Task<JToken> Ensure(JToken token, IEnumerable<Uri> properties)
         {
+            if (token.Type == JTokenType.String)
+            {
+                // It's just a URL, so we definitely need to fetch it from the cache
+                var entityUrl = new Uri(token.ToString());
+                await GetFile(entityUrl);
+                return await _entityCache.GetEntity(entityUrl);
+            }
+            
             JObject jObject = token as JObject;
 
             if (jObject != null)
