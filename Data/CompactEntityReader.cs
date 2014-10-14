@@ -70,10 +70,10 @@ namespace NuGet.Data
         /// <summary>
         /// True if the entity has all of these properties. This is assuming the proper vocabs are used.
         /// </summary>
-        public bool? HasProperties(IEnumerable<string> properties)
+        public bool? HasProperties(IEnumerable<string> desiredProperties)
         {
             HashSet<string> jsonProps = new HashSet<string>(_entityJson.Properties().Select(p => p.Name));
-            return jsonProps.IsSubsetOf(properties);
+            return jsonProps.IsSupersetOf(desiredProperties);
         }
 
         /// <summary>
