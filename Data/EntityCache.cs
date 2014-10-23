@@ -4,6 +4,7 @@ using Newtonsoft.Json.Linq;
 using System;
 using System.Collections.Concurrent;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Text;
@@ -14,28 +15,85 @@ namespace NuGet.Data
     /// <summary>
     /// Thread safe cache of graphs.
     /// </summary>
-    public class EntityCache
+    public class EntityCache : IDisposable
     {
-        private readonly JsonLdGraph _masterGraph;
-        private readonly Queue<JsonLdPage> _pages;
-        private readonly ConcurrentQueue<Task> _addTasks;
-        private const int _maxAdds = 5;
-
-        // TODO: at what triple count does perf start to drop off?
-        private const int _maxEntityCacheSize = 50000;
+        private JsonLdGraph _masterGraph;
+        private readonly ConcurrentDictionary<Uri, JsonLdPage> _pages;
+        private bool _disposed;
+        private readonly System.Threading.Timer _tidyTimer;
+        private readonly TimeSpan _cacheExpiration;
 
         public EntityCache()
+            : this(TimeSpan.FromMinutes(5))
         {
-            _masterGraph = new JsonLdGraph();
-            _pages = new Queue<JsonLdPage>();
-            _addTasks = new ConcurrentQueue<Task>();
+
         }
 
+        public EntityCache(TimeSpan cacheExpiration)
+        {
+            _masterGraph = new JsonLdGraph();
+            _pages = new ConcurrentDictionary<Uri, JsonLdPage>();
+            _cacheExpiration = cacheExpiration;
+            _tidyTimer = new System.Threading.Timer(TidyTimerTick, null, _cacheExpiration, _cacheExpiration);
+        }
+
+        /// <summary>
+        /// True if the page has been added to the cache.
+        /// </summary>
         public bool HasPageOfEntity(Uri entity)
         {
-            JsonLdPage page = new JsonLdPage(Utility.GetUriWithoutHash(entity));
+            bool result = false;
+            Uri uri = Utility.GetUriWithoutHash(entity);
 
-            return _pages.Contains(page);
+            JsonLdPage page = null;
+            if (_pages.TryGetValue(uri, out page))
+            {
+                // make the page as accessed so it stays around
+                page.UpdateLastUsed();
+                result = !page.IsDisposed; // to be extra safe
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// A minimally blocking call that starts a background task to update the graph.
+        /// </summary>
+        /// <param name="compacted"></param>
+        /// <param name="pageUri"></param>
+        public void Add(JObject compacted, Uri pageUri)
+        {
+            Debug.Assert(pageUri.AbsoluteUri.IndexOf("#") == -1, "Add should be on the full Uri and not the child Uri!");
+
+            JsonLdPage page = new JsonLdPage(pageUri, compacted);
+
+            if (_pages.TryAdd(pageUri, page))
+            {
+                // start the graph load
+                page.BeginLoad(AddCallback);
+            }
+            else
+            {
+                // clean up
+                page.Dispose();
+            }
+        }
+
+        /// <summary>
+        /// Look up the entity in the cache.
+        /// </summary>
+        public async Task<JToken> GetEntity(Uri entity)
+        {
+            // If the uri matches a page we have, use that since it is guaranteed to be the best match
+            JToken token = GetEntityFromPage(entity);
+
+            if (token == null)
+            {
+                // if we don't have the page, or the entity is a # uri, try finding the entity in the graph
+                token = await Task<JToken>.Run(() => GetEntityFromGraph(entity));
+            }
+
+            return token;
         }
 
         /// <summary>
@@ -56,156 +114,280 @@ namespace NuGet.Data
             }
             else
             {
-                // otherwise check if we already have the pieces
-                IEnumerable<JsonLdTriple> triples = null;
-
-                WaitForTasks();
-
-                lock (this)
-                {
-                    triples = _masterGraph.SelectSubject(entity);
-                }
-
-                bool missing = false;
-
-                foreach (var prop in properties)
-                {
-                    if (!triples.Where(t => StringComparer.Ordinal.Equals(prop.AbsoluteUri, t.Predicate.GetValue())).Any())
-                    {
-                        missing = true;
-                        break;
-                    }
-                }
-
-                if (!missing)
-                {
-                    result = null;
-                }
+                result = await Task<bool?>.Run(() => FetchNeededGraphLookup(entity, properties));
             }
 
             return result;
         }
 
         /// <summary>
-        /// A minimally blocking call that starts a background task to update the graph.
+        /// Check if the properties exist in the master graph.
         /// </summary>
-        /// <param name="compacted"></param>
-        /// <param name="pageUri"></param>
-        public void Add(JObject compacted, Uri pageUri)
+        private bool? FetchNeededGraphLookup(Uri entity, IEnumerable<Uri> properties)
         {
-            JsonLdPage page = new JsonLdPage(pageUri);
+            bool? result = true;
 
-            // TODO: does this need a limiter?
-            _addTasks.Enqueue(Task.Run(() => AddInternal(compacted, page)));
+            // otherwise check if we already have the pieces
+            IEnumerable<JsonLdTriple> triples = null;
+
+            // wait for all existing adds to finish
+            WaitForTasks();
+
+            lock (this)
+            {
+                triples = _masterGraph.SelectSubject(entity);
+
+                // update the last access time for these pages
+                foreach (var page in triples.Select(t => t.Page).Distinct())
+                {
+                    page.UpdateLastUsed();
+                }
+            }
+
+            bool missing = false;
+
+            foreach (Uri prop in properties)
+            {
+                if (!triples.Where(t => StringComparer.Ordinal.Equals(prop.AbsoluteUri, t.Predicate.GetValue())).Any())
+                {
+                    missing = true;
+                    break;
+                }
+            }
+
+            if (!missing)
+            {
+                result = null;
+            }
+
+            return result;
+        }
+
+        /// <summary>
+        /// Called by JsonLdPage after the graph has loaded.
+        /// </summary>
+        private void AddCallback(JsonLdPage page)
+        {
+            page.UpdateLastUsed();
+            MergeGraph(page.Graph);
+        }
+
+        /// <summary>
+        /// Add a graph to the master graph.
+        /// </summary>
+        private void MergeGraph(JsonLdGraph graph)
+        {
+            lock (this)
+            {
+                _masterGraph.Merge(graph);
+            }
         }
 
         /// <summary>
         /// Waits until all queued tasks have completed. Do not run this from inside a lock!
         /// </summary>
-        private void WaitForTasks()
+        public void WaitForTasks()
         {
-            while (_addTasks.Count > 0)
+            JsonLdPage[] pages = _pages.Values.Where(p => !p.IsLoaded).ToArray();
+
+            foreach (JsonLdPage page in pages)
             {
-                Task task = null;
-                if (_addTasks.TryDequeue(out task))
+                try
                 {
-                    task.Wait();
+                    if (!page.IsDisposed && !page.IsLoaded)
+                    {
+                        // wait for the graph to get merged into the master graph
+                        page.Loaded.Wait();
+                    }
+                }
+                catch (ObjectDisposedException)
+                {
+                    // in the very rare chance this happens, just ignore the removed page
                 }
             }
         }
 
-        private void AddInternal(JObject compacted, JsonLdPage page)
+        /// <summary>
+        /// Return the entity from the graph
+        /// </summary>
+        /// <param name="entity"></param>
+        /// <returns></returns>
+        private JToken GetEntityFromGraph(Uri entity)
         {
-            if (!Utility.IsValidJsonLd(compacted))
-            {
-                DataTraceSources.Verbose("[EntityCache] Invalid JsonLd skipping {0}", page.Uri.AbsoluteUri);
-                return;
-            }
-            else
-            {
-                Uri rootUri = Utility.GetEntityUri(compacted);
+            JToken token = null;
 
-                if (rootUri == null)
-                {
-                    // remove the blank node
-                    string blankUrl = "http://blanknode.nuget.org/" + Guid.NewGuid().ToString();
-                    compacted["@id"] = blankUrl;
-                    DataTraceSources.Verbose("[EntityCache] BlankNode Doc {0}", blankUrl);
-                }
-            }
+            JsonLdTripleCollection triples = null;
+
+            DataTraceSources.Verbose("[EntityCache] GetEntity {0}", entity.AbsoluteUri);
+
+            // make sure everything added at this point has gone into the master graph
+            WaitForTasks();
 
             lock (this)
             {
-                if (_pages.Contains(page))
+                // find the best JToken for this subject that we have
+                triples = _masterGraph.SelectSubject(entity);
+
+                // update the last access time for these pages
+                foreach (var page in triples.Select(t => t.Page).Distinct())
+                {
+                    page.UpdateLastUsed();
+                }
+            }
+
+            // find the best jtoken for the subject
+            JsonLdTriple triple = triples.Where(n => n.JsonNode != null).OrderByDescending(t => t.HasIdMatchingUrl ? 1 : 0).FirstOrDefault();
+
+            if (triple != null)
+            {
+                token = triple.JsonNode;
+            }
+
+            return token;
+        }
+
+        /// <summary>
+        /// Returns the JObject of the page if we have it.
+        /// </summary>
+        private JObject GetEntityFromPage(Uri entity)
+        {
+            JObject result = null;
+
+            if (Utility.IsRootUri(entity))
+            {
+                JsonLdPage matchingPage = null;
+                if (_pages.TryGetValue(entity, out matchingPage))
+                {
+                    matchingPage.UpdateLastUsed();
+                    result = matchingPage.Compacted;
+                }
+            }
+
+            return result;
+        }
+
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+
+                // wait for the timer to stop to avoid loose threads
+                using (System.Threading.WaitHandle handle = new System.Threading.EventWaitHandle(false, System.Threading.EventResetMode.ManualReset))
+                {
+                    _tidyTimer.Dispose(handle);
+                    handle.WaitOne();
+                }
+
+                foreach (var page in _pages.Values)
+                {
+                    page.Dispose();
+                }
+
+                _pages.Clear();
+            }
+        }
+
+        /// <summary>
+        /// Clean up timer call.
+        /// </summary>
+        /// <param name="obj"></param>
+        private void TidyTimerTick(object obj)
+        {
+            if (!_disposed)
+            {
+                // avoid overlapping ticks
+                lock (_tidyTimer)
+                {
+                    CleanUp(_cacheExpiration);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Removes all pages not used within the given time span.
+        /// </summary>
+        private void CleanUp(TimeSpan keepPagesUsedWithin)
+        {
+            DateTime cutOff = DateTime.UtcNow.Subtract(keepPagesUsedWithin);
+
+            // lock to keep any new pages from being added during this
+            lock (this)
+            {
+                // just in case we show really late
+                if (_disposed)
                 {
                     return;
                 }
 
-                _pages.Enqueue(page);
-            }
+                // create a working set of pages that can be considered locked
+                JsonLdPage[] pages = _pages.Values.ToArray();
 
-            DataTraceSources.Verbose("[EntityCache] Added {0}", page.Uri.AbsoluteUri);
-
-            // Load
-            JsonLdGraph jsonGraph = JsonLdGraph.Load(compacted, page);
-
-            lock (this)
-            {
-                // Reduce the cache before adding anything new, this could potentially block a while
-                Reduce(_maxEntityCacheSize);
-
-                _masterGraph.Merge(jsonGraph);
-            }
-        }
-
-        public bool Reduce(int maxTriples)
-        {
-            bool reduced = false;
-
-            lock (this)
-            {
-                while (_masterGraph.Count > maxTriples)
+                // if pages are still loading we should skip the clean up
+                // TODO: post-preview this should force a clean up if the graph is huge
+                if (pages.All(p => p.IsLoaded))
                 {
-                    var removePage = _pages.Dequeue();
-                    _masterGraph.RemovePage(removePage);
-                    reduced = true;
+                    // check if a clean up is needed
+                    if (pages.Any(p => !p.UsedAfter(cutOff)))
+                    {
+                        List<JsonLdPage> keep = new List<JsonLdPage>(pages.Length);
+                        List<JsonLdPage> remove = new List<JsonLdPage>(pages.Length);
+
+                        // pages could potentially change last accessed times, so make the decisions in one shot
+                        foreach (var page in pages)
+                        {
+                            if (page.UsedAfter(cutOff))
+                            {
+                                keep.Add(page);
+                            }
+                            else
+                            {
+                                remove.Add(page);
+                            }
+                        }
+
+                        // second check to make sure we need to do this
+                        if (remove.Count > 0)
+                        {
+                            DataTraceSources.Verbose("[EntityCache] EntityCache rebuild started.");
+
+                            JsonLdGraph graph = null;
+
+                            // graph merge
+                            foreach (var page in keep)
+                            {
+                                graph.Merge(page.Graph);
+                            }
+
+                            // if everything has expired just make a blank graph
+                            if (graph == null)
+                            {
+                                graph = new JsonLdGraph();
+                            }
+
+                            _masterGraph = graph;
+
+                            DataTraceSources.Verbose("[EntityCache] EntityCache rebuild complete.");
+
+                            // remove and dispose of the old pages
+                            foreach (var page in remove)
+                            {
+                                JsonLdPage removedPage = null;
+                                if (_pages.TryRemove(page.Uri, out removedPage))
+                                {
+                                    Debug.Assert(!removedPage.UsedAfter(cutOff), "Someone used a page that was scheduled to be removed. This should have been locked.");
+                                    removedPage.Dispose();
+                                }
+                                else
+                                {
+                                    Debug.Fail(page.Uri.AbsoluteUri + " disappeared from the page cache.");
+                                }
+                            }
+                        }
+                    }
                 }
             }
-
-            return reduced;
-        }
-
-
-        /// <summary>
-        /// Look up the entity in the cache.
-        /// </summary>
-        public async Task<JToken> GetEntity(Uri entity)
-        {
-            return await Task<JToken>.Run(() =>
-                {
-                    JToken token = null;
-
-                    DataTraceSources.Verbose("[EntityCache] GetEntity {0}", entity.AbsoluteUri);
-
-                    WaitForTasks();
-
-                    JsonLdTripleCollection triples = null;
-
-                    lock (this)
-                    {
-                        // find the best JToken for this subject that we have
-                        triples = _masterGraph.SelectSubject(entity);
-                    }
-
-                    JsonLdTriple triple = triples.Where(n => n.JsonNode != null).OrderByDescending(t => t.HasIdMatchingUrl ? 1 : 0).FirstOrDefault();
-
-                    if (triple != null)
-                    {
-                        token = triple.JsonNode;
-                    }
-
-                    return token;
-                });
         }
     }
 }

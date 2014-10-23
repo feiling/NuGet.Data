@@ -11,9 +11,6 @@ namespace NuGet.Data
 {
     public partial class JsonLdGraph : JsonLdTripleCollection
     {
-        // additional triples which contain links to less useful JTokens
-        private readonly List<JsonLdTriple> _alternativeTriples;
-
         private readonly Dictionary<string, Dictionary<string, List<JsonLdTriple>>> _subjectIndex;
 
         public JsonLdGraph()
@@ -25,7 +22,6 @@ namespace NuGet.Data
         public JsonLdGraph(IEnumerable<JsonLdTriple> triples)
             : base(null)
         {
-            _alternativeTriples = new List<JsonLdTriple>();
             _subjectIndex = new Dictionary<string, Dictionary<string, List<JsonLdTriple>>>();
         }
 
@@ -57,14 +53,7 @@ namespace NuGet.Data
                         if (IsBetter(triple, existingTriple))
                         {
                             objs.Remove(existingTriple);
-                            _alternativeTriples.Add(existingTriple);
-
                             objs.Add(triple);
-                        }
-                        else
-                        {
-                            // keep this one around incase we drop the page of the best one
-                            _alternativeTriples.Add(triple);
                         }
                     }
                     else
@@ -108,8 +97,6 @@ namespace NuGet.Data
         {
             lock (this)
             {
-                _alternativeTriples.RemoveAll(t => t.Page.Equals(page));
-
                 var subjects = _subjectIndex.Keys.ToArray();
                 foreach (var subject in subjects)
                 {
@@ -129,16 +116,6 @@ namespace NuGet.Data
                     {
                         _subjectIndex.Remove(subject);
                     }
-                }
-
-                // todo: optimize this
-                var alts = _alternativeTriples.ToArray();
-                _alternativeTriples.Clear();
-
-                // re-merge all alts
-                foreach (var alt in alts)
-                {
-                    AssertNoLock(alt);
                 }
             }
         }
@@ -210,20 +187,6 @@ namespace NuGet.Data
                     }
 
                     return triples;
-                }
-            }
-        }
-
-        /// <summary>
-        /// additional triples which contain links to less useful JTokens
-        /// </summary>
-        public IEnumerable<JsonLdTriple> AlternativeTriples
-        {
-            get
-            {
-                lock (this)
-                {
-                    return _alternativeTriples.ToArray();
                 }
             }
         }

@@ -61,6 +61,14 @@ namespace NuGet.Data
         }
 
         /// <summary>
+        /// True if the uri does not have a #
+        /// </summary>
+        public static bool IsRootUri(Uri uri)
+        {
+            return (uri.AbsoluteUri.IndexOf('#') == -1);
+        }
+
+        /// <summary>
         /// Checks if the uris match or differ only in the # part. 
         /// If either are null this returns false.
         /// </summary>

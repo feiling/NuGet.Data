@@ -64,7 +64,9 @@ namespace DataConsole
                                 }
                                 }}");
 
-                DataClient cache = new DataClient(new CacheHttpClient(), new MemoryFileCache(), context);
+                System.Net.ServicePointManager.DefaultConnectionLimit = 8;
+
+                DataClient cache = new DataClient(new CacheHttpClient(), new MemoryFileCache());
 
                 //Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/microsoft.bcl/index.json");
                 Uri packageInfoUri = new Uri("http://nugetjohtaylo.blob.core.windows.net/ver3/registration/newtonsoft.json/index.json");

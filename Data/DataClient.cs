@@ -14,29 +14,20 @@ using System.Threading.Tasks;
 
 namespace NuGet.Data
 {
-    public class DataClient
+    public class DataClient : IDisposable
     {
         private readonly HttpClient _httpClient;
         private readonly FileCacheBase _fileCache;
-        private readonly JToken _context;
         private readonly EntityCache _entityCache;
+        private bool _disposed;
         private static readonly TimeSpan _lifeSpan = TimeSpan.FromMinutes(5);
+        private readonly static TimeSpan _defaultCacheLife = TimeSpan.FromHours(2);
 
         /// <summary>
         /// DataClient with the default options.
         /// </summary>
         public DataClient()
-            : this(null)
-        {
-
-        }
-
-        /// <summary>
-        /// DataClient that uses a custom context.
-        /// </summary>
-        /// <param name="context"></param>
-        public DataClient(JToken context)
-            : this(new CacheHttpClient(), new BrowserFileCache(), context)
+            : this(new CacheHttpClient(), new BrowserFileCache())
         {
 
         }
@@ -47,11 +38,20 @@ namespace NuGet.Data
         /// <param name="httpClient"></param>
         /// <param name="fileCache"></param>
         /// <param name="context"></param>
-        public DataClient(HttpClient httpClient, FileCacheBase fileCache, JToken context)
+        public DataClient(HttpClient httpClient, FileCacheBase fileCache)
         {
+            if (httpClient == null)
+            {
+                throw new ArgumentNullException("httpClient");
+            }
+
+            if (fileCache == null)
+            {
+                throw new ArgumentNullException("fileCache");
+            }
+
             _httpClient = httpClient;
             _fileCache = fileCache;
-            _context = context;
             _entityCache = new EntityCache();
         }
 
@@ -63,7 +63,7 @@ namespace NuGet.Data
         /// <returns></returns>
         public async Task<JObject> GetFile(Uri uri)
         {
-            return await GetFile(uri, TimeSpan.FromHours(2), true);
+            return await GetFile(uri, _defaultCacheLife, true);
         }
 
         /// <summary>
@@ -76,13 +76,32 @@ namespace NuGet.Data
             return await GetFile(uri, TimeSpan.MinValue, false);
         }
 
+
         /// <summary>
         /// Retrieves a url and returns it as it is.
         /// </summary>
-        /// <param name="uri"></param>
-        /// <returns></returns>
-        public async Task<JObject> GetFile(Uri uri, TimeSpan cacheTime, bool cacheInGraph=true)
+        /// <param name="uri">http uri</param>
+        /// <param name="cacheTime">cache life</param>
+        /// <param name="cacheInGraph">add this file to the entity cache</param>
+        /// <returns>the unmodified json at the url</returns>
+        public async Task<JObject> GetFile(Uri uri, TimeSpan cacheTime, bool cacheInGraph = true)
         {
+            return await GetFileInternal(uri, cacheTime, cacheInGraph, true);
+        }
+
+
+        private async Task<JObject> GetFileInternal(Uri uri, TimeSpan cacheTime, bool cacheInGraph=true, bool cloneJson=true)
+        {
+            if (uri == null)
+            {
+                throw new ArgumentNullException("uri");
+            }
+
+            if (cacheTime == null)
+            {
+                throw new ArgumentNullException("cacheTime");
+            }
+
             bool cache = cacheTime.TotalSeconds > 0;
 
             // request the root document
@@ -168,7 +187,15 @@ namespace NuGet.Data
             if (result != null)
             {
                 // this must be called before the entity cache thread starts using it
-                clonedResult = result.DeepClone() as JObject;
+                if (cloneJson)
+                {
+                    clonedResult = result.DeepClone() as JObject;
+                }
+                else
+                {
+                    // in some scenarios we can skip cloning, such as when we are throwing away the result
+                    clonedResult = result;
+                }
 
                 if (cacheInGraph)
                 {
@@ -183,30 +210,62 @@ namespace NuGet.Data
         /// <summary>
         /// Returns a JToken for the given entity.
         /// </summary>
-        /// <param name="entity"></param>
-        /// <param name="allowFetch">Allow downloading new Json.</param>
+        /// <param name="entity">JToken @id</param>
         /// <returns>The entity Json</returns>
         public async Task<JToken> GetEntity(Uri entity)
         {
+            if (entity == null)
+            {
+                throw new ArgumentNullException("entity");
+            }
+
             JToken token = await _entityCache.GetEntity(entity);
 
             if (token == null)
             {
-                await GetFile(entity);
-                var result = await _entityCache.GetEntity(entity);
+                // we don't have any info on the given entity, try downloading it
+                await EnsureFile(entity);
 
-                if (result != null)
-                {
-                    token = result.DeepClone();
-                }
-                else
+                // request the entity again
+                token = await _entityCache.GetEntity(entity);
+
+                if (token == null)
                 {
                     DataTraceSources.Verbose("[EntityCache] Unable to get entity {0}", entity.AbsoluteUri);
                     Debug.Fail("Unable to get entity");
                 }
             }
 
+            if (token != null)
+            {
+                // clone our cache copy
+                token = token.DeepClone();
+            }
+
             return token;
+        }
+
+        /// <summary>
+        /// Returns the JToken associated with the entityUri. If the given properties do not exist 
+        /// in the cache the needed pages WILL be fetched.
+        /// </summary>
+        /// <remarks>includes fetch</remarks>
+        /// <param name="entityUri">@id of the JToken</param>
+        /// <param name="properties">predicates uris</param>
+        /// <returns></returns>
+        public async Task<JToken> Ensure(Uri entityUri, IEnumerable<Uri> properties)
+        {
+            if (entityUri == null)
+            {
+                throw new ArgumentNullException("entityUri");
+            }
+
+            if (properties == null)
+            {
+                throw new ArgumentNullException("properties");
+            }
+
+            return await GetEntityHelper(null, entityUri, properties);
         }
 
         /// <summary>
@@ -218,14 +277,16 @@ namespace NuGet.Data
         /// <returns>The same JToken if it already exists, otherwise the fetched JToken.</returns>
         public async Task<JToken> Ensure(JToken token, IEnumerable<Uri> properties)
         {
-            if (token.Type == JTokenType.String)
+            if (token == null)
             {
-                // It's just a URL, so we definitely need to fetch it from the cache
-                var entityUrl = new Uri(token.ToString());
-                await GetFile(entityUrl);
-                return await _entityCache.GetEntity(entityUrl);
+                throw new ArgumentNullException("token");
             }
-            
+
+            if (properties == null)
+            {
+                throw new ArgumentNullException("properties");
+            }
+
             JObject jObject = token as JObject;
 
             if (jObject != null)
@@ -242,23 +303,10 @@ namespace NuGet.Data
                         {
                             // at this point we know the compact token does not include the needed properties,
                             // we need to either download the file it lives on, or find it in the entity cache
-
-                            // determine if we should fetch the page or give up
-                            // TODO: the page could in a race case get dropped between FetchNeeded and GetEntity
-                            bool? fetch = await _entityCache.FetchNeeded(compactEntity.EntityUri, properties);
-
-                            if (fetch == true)
-                            {
-                                // we are missing properties and do not have the page
-                                DataTraceSources.Verbose("[DataClient] GetFile required to Ensure {0}", compactEntity.EntityUri.AbsoluteUri);
-                                await GetFile(compactEntity.EntityUri);
-                            }
-
-                            // null means either there is no work to do, or that we gave up, return the original token here
-                            if (fetch != null)
-                            {
-                                return await _entityCache.GetEntity(compactEntity.EntityUri);
-                            }
+                            // if the token is for an entity that just does not exist or is corrupted in some way
+                            // the original token will be returned since the entity cache cannot improve it after
+                            // trying all possible methods.
+                            return await GetEntityHelper(token, compactEntity.EntityUri, properties);
                         }
                     }
                     else
@@ -267,14 +315,66 @@ namespace NuGet.Data
                     }
                 }
             }
+            else if (token.Type == JTokenType.String)
+            {
+                // It's just a URL, so we definitely need to fetch it from the cache
+                string tokenString = token.ToString();
+
+                // make sure it is a url
+                if (!String.IsNullOrEmpty(tokenString) && tokenString.StartsWith("http", StringComparison.OrdinalIgnoreCase))
+                {
+                    Uri entityUrl = new Uri(tokenString);
+
+                    // the entity cache should either find the child entity or if this url is a root url the full page will be returned
+                    return await GetEntityHelper(token, entityUrl, properties);
+                }
+            }
             else
             {
                 DataTraceSources.Verbose("[EntityCache] Non-JObject, unable to use this!");
             }
 
+            // give the original token back
             return token;
         }
 
+        /// <summary>
+        /// Retrieves the best match from the entity cache. If no matches exist this will attempt to download the file.
+        /// </summary>
+        /// <remarks>returns a cloned copy</remarks>
+        /// <returns>The entity cache result or the original token if it cannot be improved.</returns>
+        private async Task<JToken> GetEntityHelper(JToken originalToken, Uri entity, IEnumerable<Uri> properties)
+        {
+            bool? fetch = await _entityCache.FetchNeeded(entity, properties);
+
+            JToken token = originalToken;
+
+            if (fetch == true)
+            {
+                // we are missing properties and do not have the page
+                DataTraceSources.Verbose("[DataClient] GetFile required to Ensure {0}", entity.AbsoluteUri);
+                await EnsureFile(entity);
+            }
+
+            // null means either there is no work to do, or that we gave up, return the original token here
+            // if the original token is null, meaning this came from Ensure(uri, uri[]) then we need to get the token from the cache
+            if (fetch != null || originalToken == null)
+            {
+                JToken entityCacheResult = await _entityCache.GetEntity(entity);
+
+                // If the entity cache is unable to improve the result, return the original
+                if (entityCacheResult != null)
+                {
+                    token = entityCacheResult.DeepClone();
+                }
+            }
+
+            return token;
+        }
+
+        /// <summary>
+        /// Converts a json stream into a JObject.
+        /// </summary>
         private async static Task<JObject> StreamToJson(Stream stream)
         {
             JObject jObj = null;
@@ -303,6 +403,29 @@ namespace NuGet.Data
             }
 
             return jObj;
+        }
+
+        /// <summary>
+        /// Internal helper for GetFile that avoids cloning.
+        /// </summary>
+        /// <returns></returns>
+        private async Task EnsureFile(Uri uri)
+        {
+            if (!_entityCache.HasPageOfEntity(uri))
+            {
+                // cache the file but ignore the result
+                await GetFileInternal(uri, _defaultCacheLife, true, false);
+            }
+        }
+
+        public void Dispose()
+        {
+            if (!_disposed)
+            {
+                _disposed = true;
+
+                _entityCache.Dispose();
+            }
         }
     }
 }
