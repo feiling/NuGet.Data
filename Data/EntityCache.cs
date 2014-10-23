@@ -352,18 +352,12 @@ namespace NuGet.Data
                         {
                             DataTraceSources.Verbose("[EntityCache] EntityCache rebuild started.");
 
-                            JsonLdGraph graph = null;
+                            JsonLdGraph graph = new JsonLdGraph();
 
                             // graph merge
                             foreach (var page in keep)
                             {
                                 graph.Merge(page.Graph);
-                            }
-
-                            // if everything has expired just make a blank graph
-                            if (graph == null)
-                            {
-                                graph = new JsonLdGraph();
                             }
 
                             _masterGraph = graph;
