@@ -74,6 +74,7 @@
     <Compile Include="EntityCache.cs" />
     <Compile Include="FileCacheBase.cs" />
     <Compile Include="FileCacheEntry.cs" />
+    <Compile Include="GlobalSuppressions.cs" />
     <Compile Include="JsonExtensions.cs" />
     <Compile Include="JsonLdExtensions.cs" />
     <Compile Include="JsonLdGraph\JsonLdGraph.cs" />
