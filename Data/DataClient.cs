@@ -1,16 +1,11 @@
-﻿using JsonLD.Core;
-using Newtonsoft.Json;
-using Newtonsoft.Json.Linq;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
-using System.Linq;
 using System.Net;
 using System.Net.Http;
-using System.Text;
-using System.Threading;
 using System.Threading.Tasks;
+using Newtonsoft.Json.Linq;
 
 namespace NuGet.Data
 {
@@ -29,7 +24,6 @@ namespace NuGet.Data
         public DataClient()
             : this(new CacheHttpClient(), new BrowserFileCache())
         {
-
         }
 
         /// <summary>
@@ -55,7 +49,6 @@ namespace NuGet.Data
             _entityCache = new EntityCache();
         }
 
-
         /// <summary>
         /// Retrieves a url with caching.
         /// </summary>
@@ -76,7 +69,6 @@ namespace NuGet.Data
             return await GetFile(uri, TimeSpan.MinValue, false);
         }
 
-
         /// <summary>
         /// Retrieves a url and returns it as it is.
         /// </summary>
@@ -89,8 +81,7 @@ namespace NuGet.Data
             return await GetFileInternal(uri, cacheTime, cacheInGraph, true);
         }
 
-
-        private async Task<JObject> GetFileInternal(Uri uri, TimeSpan cacheTime, bool cacheInGraph=true, bool cloneJson=true)
+        private async Task<JObject> GetFileInternal(Uri uri, TimeSpan cacheTime, bool cacheInGraph = true, bool cloneJson = true)
         {
             if (uri == null)
             {
@@ -131,7 +122,7 @@ namespace NuGet.Data
 
                             var response = await _httpClient.SendAsync(request);
 
-                            Debug.Assert(response.StatusCode == HttpStatusCode.OK, "Received non-OK status code response from " + request.RequestUri.ToString());
+                            // !!! Debug.Assert(response.StatusCode == HttpStatusCode.OK, "Received non-OK status code response from " + request.RequestUri.ToString());
                             if (response.StatusCode == HttpStatusCode.OK)
                             {
                                 stream = await response.Content.ReadAsStreamAsync();
@@ -243,7 +234,7 @@ namespace NuGet.Data
         }
 
         /// <summary>
-        /// Returns the JToken associated with the entityUri. If the given properties do not exist 
+        /// Returns the JToken associated with the entityUri. If the given properties do not exist
         /// in the cache the needed pages WILL be fetched.
         /// </summary>
         /// <remarks>includes fetch</remarks>
@@ -375,6 +366,7 @@ namespace NuGet.Data
         private async static Task<JObject> StreamToJson(Stream stream)
         {
             JObject jObj = null;
+            string json = null;
 
             if (stream != null)
             {
@@ -384,14 +376,16 @@ namespace NuGet.Data
 
                     using (var reader = new StreamReader(stream))
                     {
-                        string json = await reader.ReadToEndAsync();
+                        json = await reader.ReadToEndAsync();
                         jObj = JObject.Parse(json);
                     }
-                } 
+                }
                 catch (Exception ex)
                 {
                     DataTraceSources.Verbose("[StreamToJson] Failed {0}", ex.ToString());
-                    Debug.Fail("Unable to parse json: " + ex.ToString());
+                    // !!! Debug.Fail("Unable to parse json: " + ex.ToString());
+                    jObj = new JObject();
+                    jObj.Add("raw", JValue.CreateString(json));
                 }
             }
             else
