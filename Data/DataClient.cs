@@ -113,67 +113,64 @@ namespace NuGet.Data
 
             try
             {
-                using (var uriLock = new UriLock(fixedUri))
+                if (!cache || !_fileCache.TryGet(fixedUri, out stream))
                 {
-                    if (!cache || !_fileCache.TryGet(fixedUri, out stream))
+                    // the stream was not in the cache or we are skipping the cache
+                    int tries = 0;
+
+                    // try up to 5 times to be a little more robust
+                    while (stream == null && tries < 5)
                     {
-                        // the stream was not in the cache or we are skipping the cache
-                        int tries = 0;
+                        tries++;
 
-                        // try up to 5 times to be a little more robust
-                        while (stream == null && tries < 5)
+                        try
                         {
-                            tries++;
+                            HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, fixedUri.AbsoluteUri);
 
-                            try
+                            DataTraceSources.Verbose("[HttpClient] GET {0}", fixedUri.AbsoluteUri);
+
+                            var response = await _httpClient.SendAsync(request);
+
+                            Debug.Assert(response.StatusCode == HttpStatusCode.OK, "Received non-OK status code response from " + request.RequestUri.ToString());
+                            if (response.StatusCode == HttpStatusCode.OK)
                             {
-                                HttpRequestMessage request = new HttpRequestMessage(HttpMethod.Get, fixedUri.AbsoluteUri);
+                                stream = await response.Content.ReadAsStreamAsync();
 
-                                DataTraceSources.Verbose("[HttpClient] GET {0}", fixedUri.AbsoluteUri);
-
-                                var response = await _httpClient.SendAsync(request);
-
-                                Debug.Assert(response.StatusCode == HttpStatusCode.OK, "Received non-OK status code response from " + request.RequestUri.ToString());
-                                if (response.StatusCode == HttpStatusCode.OK)
+                                if (stream != null)
                                 {
-                                    stream = await response.Content.ReadAsStreamAsync();
-
-                                    if (stream != null)
+                                    if (cache)
                                     {
-                                        if (cache)
-                                        {
-                                            DataTraceSources.Verbose("[HttpClient] Caching {0}");
-                                            _fileCache.Add(fixedUri, _lifeSpan, stream);
-                                        }
-
-                                        DataTraceSources.Verbose("[HttpClient] 200 OK Length: {0}", "" + stream.Length);
-                                        result = await StreamToJson(stream);
+                                        DataTraceSources.Verbose("[HttpClient] Caching {0}");
+                                        _fileCache.Add(fixedUri, _lifeSpan, stream);
                                     }
-                                }
-                                else
-                                {
-                                    DataTraceSources.Verbose("[HttpClient] FAILED {0}", "" + (int)response.StatusCode);
-                                    result = new JObject();
-                                    result.Add("HttpStatusCode", (int)response.StatusCode);
+
+                                    DataTraceSources.Verbose("[HttpClient] 200 OK Length: {0}", "" + stream.Length);
+                                    result = await StreamToJson(stream);
                                 }
                             }
-                            catch (HttpRequestException ex)
+                            else
                             {
-                                Debug.Fail("WebRequest failed: " + ex.ToString());
-                                DataTraceSources.Verbose("[HttpClient] FAILED {0}", ex.ToString());
-
-                                // request error
+                                DataTraceSources.Verbose("[HttpClient] FAILED {0}", "" + (int)response.StatusCode);
                                 result = new JObject();
-                                result.Add("HttpRequestException", ex.ToString());
+                                result.Add("HttpStatusCode", (int)response.StatusCode);
                             }
                         }
+                        catch (HttpRequestException ex)
+                        {
+                            Debug.Fail("WebRequest failed: " + ex.ToString());
+                            DataTraceSources.Verbose("[HttpClient] FAILED {0}", ex.ToString());
+
+                            // request error
+                            result = new JObject();
+                            result.Add("HttpRequestException", ex.ToString());
+                        }
                     }
-                    else
-                    {
-                        // the stream was in the cache
-                        DataTraceSources.Verbose("[HttpClient] Cached Length: {0}", "" + stream.Length);
-                        result = await StreamToJson(stream);
-                    }
+                }
+                else
+                {
+                    // the stream was in the cache
+                    DataTraceSources.Verbose("[HttpClient] Cached Length: {0}", "" + stream.Length);
+                    result = await StreamToJson(stream);
                 }
             }
             finally
