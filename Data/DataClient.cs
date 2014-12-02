@@ -4,6 +4,7 @@ using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Http;
+using System.Threading;
 using System.Threading.Tasks;
 using Newtonsoft.Json.Linq;
 
@@ -54,9 +55,9 @@ namespace NuGet.Data
         /// </summary>
         /// <param name="uri"></param>
         /// <returns></returns>
-        public async Task<JObject> GetFile(Uri uri)
+        public async Task<JObject> GetFile(Uri uri, CancellationToken cancellationToken)
         {
-            return await GetFile(uri, _defaultCacheLife, true);
+            return await GetFile(uri, _defaultCacheLife, cacheInGraph: true, cancellationToken: cancellationToken);
         }
 
         /// <summary>
@@ -64,9 +65,9 @@ namespace NuGet.Data
         /// </summary>
         /// <param name="uri"></param>
         /// <returns></returns>
-        public async Task<JObject> GetFileNoCache(Uri uri)
+        public async Task<JObject> GetFileNoCache(Uri uri, CancellationToken cancellationToken)
         {
-            return await GetFile(uri, TimeSpan.MinValue, false);
+            return await GetFile(uri, TimeSpan.MinValue, cacheInGraph: false, cancellationToken: cancellationToken);
         }
 
         /// <summary>
@@ -76,12 +77,12 @@ namespace NuGet.Data
         /// <param name="cacheTime">cache life</param>
         /// <param name="cacheInGraph">add this file to the entity cache</param>
         /// <returns>the unmodified json at the url</returns>
-        public async Task<JObject> GetFile(Uri uri, TimeSpan cacheTime, bool cacheInGraph = true)
+        public async Task<JObject> GetFile(Uri uri, TimeSpan cacheTime, bool cacheInGraph, CancellationToken cancellationToken)
         {
-            return await GetFileInternal(uri, cacheTime, cacheInGraph, true);
+            return await GetFileInternal(uri, cacheTime, cacheInGraph, true, cancellationToken);
         }
 
-        private async Task<JObject> GetFileInternal(Uri uri, TimeSpan cacheTime, bool cacheInGraph = true, bool cloneJson = true)
+        private async Task<JObject> GetFileInternal(Uri uri, TimeSpan cacheTime, bool cacheInGraph, bool cloneJson, CancellationToken cancellationToken)
         {
             if (uri == null)
             {
@@ -120,7 +121,7 @@ namespace NuGet.Data
 
                             DataTraceSources.Verbose("[HttpClient] GET {0}", fixedUri.AbsoluteUri);
 
-                            var response = await _httpClient.SendAsync(request);
+                            var response = await _httpClient.SendAsync(request, cancellationToken);
 
                             // !!! Debug.Assert(response.StatusCode == HttpStatusCode.OK, "Received non-OK status code response from " + request.RequestUri.ToString());
                             if (response.StatusCode == HttpStatusCode.OK)
@@ -200,7 +201,7 @@ namespace NuGet.Data
         /// </summary>
         /// <param name="entity">JToken @id</param>
         /// <returns>The entity Json</returns>
-        public async Task<JToken> GetEntity(Uri entity)
+        public async Task<JToken> GetEntity(Uri entity, CancellationToken cancellationToken)
         {
             if (entity == null)
             {
@@ -212,7 +213,7 @@ namespace NuGet.Data
             if (token == null)
             {
                 // we don't have any info on the given entity, try downloading it
-                await EnsureFile(entity);
+                await EnsureFile(entity, cancellationToken);
 
                 // request the entity again
                 token = await _entityCache.GetEntity(entity);
@@ -241,7 +242,7 @@ namespace NuGet.Data
         /// <param name="entityUri">@id of the JToken</param>
         /// <param name="properties">predicates uris</param>
         /// <returns></returns>
-        public async Task<JToken> Ensure(Uri entityUri, IEnumerable<Uri> properties)
+        public async Task<JToken> Ensure(Uri entityUri, IEnumerable<Uri> properties, CancellationToken cancellationToken)
         {
             if (entityUri == null)
             {
@@ -253,7 +254,7 @@ namespace NuGet.Data
                 throw new ArgumentNullException("properties");
             }
 
-            return await GetEntityHelper(null, entityUri, properties);
+            return await GetEntityHelper(null, entityUri, properties, cancellationToken);
         }
 
         /// <summary>
@@ -263,7 +264,7 @@ namespace NuGet.Data
         /// <param name="jToken">The JToken to expand. This should have an @id.</param>
         /// <param name="properties">Expanded form properties that are needed on JToken.</param>
         /// <returns>The same JToken if it already exists, otherwise the fetched JToken.</returns>
-        public async Task<JToken> Ensure(JToken token, IEnumerable<Uri> properties)
+        public async Task<JToken> Ensure(JToken token, IEnumerable<Uri> properties, CancellationToken cancellationToken)
         {
             if (token == null)
             {
@@ -294,7 +295,7 @@ namespace NuGet.Data
                             // if the token is for an entity that just does not exist or is corrupted in some way
                             // the original token will be returned since the entity cache cannot improve it after
                             // trying all possible methods.
-                            return await GetEntityHelper(token, compactEntity.EntityUri, properties);
+                            return await GetEntityHelper(token, compactEntity.EntityUri, properties, cancellationToken);
                         }
                     }
                     else
@@ -314,7 +315,7 @@ namespace NuGet.Data
                     Uri entityUrl = new Uri(tokenString);
 
                     // the entity cache should either find the child entity or if this url is a root url the full page will be returned
-                    return await GetEntityHelper(token, entityUrl, properties);
+                    return await GetEntityHelper(token, entityUrl, properties, cancellationToken);
                 }
             }
             else
@@ -331,7 +332,7 @@ namespace NuGet.Data
         /// </summary>
         /// <remarks>returns a cloned copy</remarks>
         /// <returns>The entity cache result or the original token if it cannot be improved.</returns>
-        private async Task<JToken> GetEntityHelper(JToken originalToken, Uri entity, IEnumerable<Uri> properties)
+        private async Task<JToken> GetEntityHelper(JToken originalToken, Uri entity, IEnumerable<Uri> properties, CancellationToken cancellationToken)
         {
             bool? fetch = await _entityCache.FetchNeeded(entity, properties);
 
@@ -341,7 +342,7 @@ namespace NuGet.Data
             {
                 // we are missing properties and do not have the page
                 DataTraceSources.Verbose("[DataClient] GetFile required to Ensure {0}", entity.AbsoluteUri);
-                await EnsureFile(entity);
+                await EnsureFile(entity, cancellationToken);
             }
 
             // null means either there is no work to do, or that we gave up, return the original token here
@@ -400,12 +401,12 @@ namespace NuGet.Data
         /// Internal helper for GetFile that avoids cloning.
         /// </summary>
         /// <returns></returns>
-        private async Task EnsureFile(Uri uri)
+        private async Task EnsureFile(Uri uri, CancellationToken cancellationToken)
         {
             if (!_entityCache.HasPageOfEntity(uri))
             {
                 // cache the file but ignore the result
-                await GetFileInternal(uri, _defaultCacheLife, true, false);
+                await GetFileInternal(uri, _defaultCacheLife, true, false, cancellationToken);
             }
         }
 
