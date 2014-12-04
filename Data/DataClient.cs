@@ -378,6 +378,7 @@ namespace NuGet.Data
         private async static Task<JObject> StreamToJson(Stream stream)
         {
             JObject jObj = null;
+            string json = string.Empty;
 
             if (stream != null)
             {
@@ -387,14 +388,15 @@ namespace NuGet.Data
 
                     using (var reader = new StreamReader(stream))
                     {
-                        string json = await reader.ReadToEndAsync();
+                        json = await reader.ReadToEndAsync();
                         jObj = JObject.Parse(json);
                     }
                 } 
                 catch (Exception ex)
                 {
                     DataTraceSources.Verbose("[StreamToJson] Failed {0}", ex.ToString());
-                    Debug.Fail("Unable to parse json: " + ex.ToString());
+                    jObj = new JObject();
+                    jObj.Add("raw", json);
                 }
             }
             else
